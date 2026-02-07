@@ -200,14 +200,45 @@ async function fetchLatestVideos(channel) {
       id: videoId,
       title: snippet.title || "Video sem titulo",
       url: `https://www.youtube.com/watch?v=${videoId}`,
-      thumbnail: snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || "",
+      thumbnail:
+        snippet.thumbnails?.high?.url ||
+        snippet.thumbnails?.medium?.url ||
+        snippet.thumbnails?.default?.url ||
+        "",
       publishedAt: snippet.publishedAt || null,
+      duration: null,
       channelId: channel.channelId,
       channelTitle: channel.channelTitle || snippet.channelTitle || "Canal"
     });
   }
 
+  const durationMap = await fetchVideoDurations(videos.map((video) => video.id));
+  for (const video of videos) {
+    video.duration = durationMap.get(video.id) || null;
+  }
+
   return videos;
+}
+
+async function fetchVideoDurations(videoIds) {
+  const ids = videoIds.filter(Boolean);
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const data = await callYouTube("videos", {
+    part: "contentDetails",
+    id: ids.join(","),
+    maxResults: "50"
+  });
+
+  const map = new Map();
+  for (const item of data.items || []) {
+    if (!item?.id) continue;
+    map.set(item.id, item?.contentDetails?.duration || null);
+  }
+
+  return map;
 }
 
 async function resolveChannelFromInput(input) {
@@ -412,17 +443,20 @@ function buildVideoCard(video, config) {
   const node = refs.videoTemplate.content.firstElementChild.cloneNode(true);
 
   const thumb = node.querySelector(".thumb");
+  const durationBadge = node.querySelector(".duration-badge");
   const link = node.querySelector("a");
   const meta = node.querySelector(".meta");
   const watchedCheckbox = node.querySelector(".watched-checkbox");
   const saveButton = node.querySelector(".save-button");
   const removeButton = node.querySelector(".remove-button");
+  const durationLabel = getDurationLabel(video);
 
   thumb.src = video.thumbnail || "";
   thumb.alt = `Thumbnail: ${video.title}`;
   link.href = video.url;
   link.textContent = video.title;
-  meta.textContent = `${video.channelTitle} - ${formatDate(video.publishedAt)}`;
+  meta.textContent = `${video.channelTitle} - ${formatDate(video.publishedAt)} - ${durationLabel}`;
+  durationBadge.textContent = durationLabel;
 
   const watched = Boolean(state.watchedMap[video.id]);
   watchedCheckbox.checked = watched;
@@ -495,6 +529,33 @@ function formatDate(value) {
     dateStyle: "short",
     timeStyle: "short"
   });
+}
+
+function getDurationLabel(video) {
+  const label = formatIsoDuration(video.duration);
+  if (label) return label;
+  return "N/A";
+}
+
+function formatIsoDuration(isoDuration) {
+  if (typeof isoDuration !== "string" || isoDuration.length === 0) {
+    return "";
+  }
+
+  const match = isoDuration.match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  if (!match) {
+    return "";
+  }
+
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function setStatus(message) {
