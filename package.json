@@ -1,0 +1,16 @@
+{
+  "name": "youtube-feed-hub",
+  "version": "1.0.0",
+  "description": "Feed pessoal para acompanhar uploads de canais do YouTube",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

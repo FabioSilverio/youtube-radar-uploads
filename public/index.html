@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Radar de Uploads YouTube</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Seu painel pessoal</p>
+        <h1>Radar de Uploads</h1>
+        <p class="subtitle">Centralize os videos novos dos canais que voce acompanha.</p>
+      </div>
+      <div class="tabs">
+        <button id="tab-feed" class="tab-button active" type="button">FEED</button>
+        <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <section id="feed-section" class="panel">
+        <div class="api-key-box">
+          <label for="api-key">YouTube API Key</label>
+          <div class="form-row">
+            <input id="api-key" type="password" placeholder="Cole sua API key aqui" />
+            <button id="save-api-key" type="button">Salvar chave</button>
+          </div>
+          <p class="hint">
+            Crie uma chave em Google Cloud e habilite YouTube Data API v3.
+          </p>
+        </div>
+
+        <form id="add-channel-form" class="add-channel-form">
+          <label for="channel-url">URL do canal do YouTube</label>
+          <div class="form-row">
+            <input
+              id="channel-url"
+              type="url"
+              placeholder="https://www.youtube.com/@canal"
+              required
+            />
+            <button type="submit">Adicionar canal</button>
+          </div>
+        </form>
+
+        <div class="actions">
+          <button id="refresh-feed" type="button">Atualizar feed</button>
+        </div>
+
+        <p id="status-message" class="status-message"></p>
+        <div id="channels-list" class="channels-list"></div>
+        <div id="feed-list" class="video-list"></div>
+      </section>
+
+      <section id="watch-later-section" class="panel hidden">
+        <h2>Videos salvos para assistir depois</h2>
+        <div id="watch-later-list" class="video-list"></div>
+      </section>
+    </main>
+
+    <template id="video-card-template">
+      <article class="video-card">
+        <img class="thumb" alt="" loading="lazy" />
+        <div class="video-content">
+          <h3><a target="_blank" rel="noopener noreferrer"></a></h3>
+          <p class="meta"></p>
+          <div class="controls">
+            <label class="watched-label">
+              <input type="checkbox" class="watched-checkbox" />
+              Ja assisti
+            </label>
+            <button type="button" class="save-button">Salvar para assistir depois</button>
+            <button type="button" class="remove-button hidden">Remover</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
