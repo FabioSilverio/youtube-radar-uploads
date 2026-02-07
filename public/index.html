@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260207-3" />
   </head>
   <body>
     <header class="site-header">
@@ -55,6 +55,23 @@
           <button id="refresh-feed" type="button">Atualizar feed</button>
         </div>
 
+        <div class="sync-box">
+          <label for="sync-code">Sincronizar entre dispositivos</label>
+          <div class="form-row">
+            <button id="generate-sync-code" type="button">Gerar codigo</button>
+            <button id="copy-sync-link" type="button">Copiar link</button>
+          </div>
+          <textarea
+            id="sync-code"
+            rows="3"
+            placeholder="Cole aqui o codigo de sincronizacao"
+          ></textarea>
+          <div class="actions">
+            <button id="import-sync-code" type="button">Importar codigo</button>
+          </div>
+          <p class="hint">Leve seus canais e videos salvos para outro dispositivo.</p>
+        </div>
+
         <p id="status-message" class="status-message"></p>
         <div id="channels-list" class="channels-list"></div>
         <div id="feed-list" class="video-list"></div>
@@ -88,6 +105,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-2" defer></script>
+    <script src="./app.js?v=20260207-3" defer></script>
   </body>
 </html>

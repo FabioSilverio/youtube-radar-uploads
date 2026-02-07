@@ -18,6 +18,10 @@ const refs = {
   addChannelForm: document.querySelector("#add-channel-form"),
   channelUrlInput: document.querySelector("#channel-url"),
   refreshFeedBtn: document.querySelector("#refresh-feed"),
+  generateSyncCodeBtn: document.querySelector("#generate-sync-code"),
+  copySyncLinkBtn: document.querySelector("#copy-sync-link"),
+  importSyncCodeBtn: document.querySelector("#import-sync-code"),
+  syncCodeInput: document.querySelector("#sync-code"),
   channelsList: document.querySelector("#channels-list"),
   feedList: document.querySelector("#feed-list"),
   watchLaterList: document.querySelector("#watch-later-list"),
@@ -29,6 +33,7 @@ init();
 
 function init() {
   hydrateState();
+  importFromSyncHash();
   bindEvents();
   refs.apiKeyInput.value = state.apiKey;
   render();
@@ -83,6 +88,42 @@ function bindEvents() {
 
   refs.refreshFeedBtn.addEventListener("click", refreshFeed);
   refs.channelsList.addEventListener("click", handleRemoveChannelClick);
+  refs.generateSyncCodeBtn.addEventListener("click", () => {
+    refs.syncCodeInput.value = encodeSyncState();
+    setStatus("Codigo de sincronizacao gerado.");
+  });
+  refs.copySyncLinkBtn.addEventListener("click", async () => {
+    const token = encodeSyncState();
+    const shareLink = `${window.location.origin}${window.location.pathname}#sync=${encodeURIComponent(token)}`;
+
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setStatus("Link de sincronizacao copiado.");
+    } catch {
+      refs.syncCodeInput.value = token;
+      setStatus("Nao consegui copiar automaticamente. Codigo gerado no campo.");
+    }
+  });
+  refs.importSyncCodeBtn.addEventListener("click", async () => {
+    const token = refs.syncCodeInput.value.trim();
+    if (!token) {
+      setStatus("Cole um codigo de sincronizacao primeiro.");
+      return;
+    }
+
+    try {
+      applyImportedState(decodeSyncState(token));
+      refs.apiKeyInput.value = state.apiKey;
+      render();
+      setStatus("Sincronizacao importada com sucesso.");
+
+      if (state.channels.length > 0 && state.apiKey) {
+        await refreshFeed();
+      }
+    } catch (error) {
+      setStatus(error.message || "Codigo de sincronizacao invalido.");
+    }
+  });
 }
 
 function showSection(name) {
@@ -564,6 +605,77 @@ function formatIsoDuration(isoDuration) {
 
 function setStatus(message) {
   refs.statusMessage.textContent = message;
+}
+
+function encodeSyncState() {
+  const payload = {
+    apiKey: state.apiKey,
+    channels: state.channels,
+    watchLater: state.watchLater,
+    watchedMap: state.watchedMap
+  };
+
+  return base64Encode(JSON.stringify(payload));
+}
+
+function decodeSyncState(token) {
+  let parsed;
+
+  try {
+    parsed = JSON.parse(base64Decode(token));
+  } catch {
+    throw new Error("Codigo de sincronizacao invalido.");
+  }
+
+  return parsed;
+}
+
+function applyImportedState(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Codigo de sincronizacao invalido.");
+  }
+
+  state.apiKey = typeof payload.apiKey === "string" ? payload.apiKey : "";
+  state.channels = Array.isArray(payload.channels) ? payload.channels : [];
+  state.watchLater = Array.isArray(payload.watchLater) ? payload.watchLater : [];
+  state.watchedMap = payload.watchedMap && typeof payload.watchedMap === "object" ? payload.watchedMap : {};
+  state.feedVideos = [];
+  persist();
+}
+
+function importFromSyncHash() {
+  const hash = window.location.hash || "";
+  if (!hash.startsWith("#sync=")) {
+    return;
+  }
+
+  const token = decodeURIComponent(hash.slice(6));
+
+  try {
+    applyImportedState(decodeSyncState(token));
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    } else {
+      window.location.hash = "";
+    }
+  } catch {
+    setStatus("Nao consegui importar sincronizacao do link.");
+  }
+}
+
+function base64Encode(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
+function base64Decode(value) {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 function persist() {

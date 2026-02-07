@@ -89,7 +89,8 @@ body {
 }
 
 .api-key-box,
-.add-channel-form {
+.add-channel-form,
+.sync-box {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -97,7 +98,8 @@ body {
 }
 
 .api-key-box label,
-.add-channel-form label {
+.add-channel-form label,
+.sync-box label {
   font-weight: 800;
 }
 
@@ -118,6 +120,23 @@ input {
 }
 
 input:focus {
+  outline: 2px solid #ffc08f;
+  outline-offset: 1px;
+}
+
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.66rem;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  resize: vertical;
+  min-height: 76px;
+}
+
+textarea:focus {
   outline: 2px solid #ffc08f;
   outline-offset: 1px;
 }
