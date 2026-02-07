@@ -83,6 +83,44 @@ body {
   padding: 1rem;
 }
 
+.sync-panel {
+  max-width: 1160px;
+  margin: 0 auto 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.sync-panel summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.8rem 1rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.sync-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.sync-panel summary::after {
+  content: "Mostrar";
+  float: right;
+  font-size: 0.85rem;
+  color: var(--hot);
+}
+
+.sync-panel[open] summary::after {
+  content: "Ocultar";
+}
+
+.sync-panel-body {
+  padding: 0 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
 .panel {
   display: flex;
   flex-direction: column;

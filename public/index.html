@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-4" />
+    <link rel="stylesheet" href="./styles.css?v=20260207-5" />
   </head>
   <body>
     <header class="site-header">
@@ -56,6 +56,25 @@
           <button id="refresh-feed" type="button">Atualizar feed</button>
         </div>
 
+        <p id="status-message" class="status-message"></p>
+        <div id="channels-list" class="channels-list"></div>
+        <div id="feed-list" class="video-list"></div>
+      </section>
+
+      <section id="watch-later-section" class="panel hidden">
+        <h2>Videos salvos para assistir depois</h2>
+        <div id="watch-later-list" class="video-list"></div>
+      </section>
+
+      <section id="seen-section" class="panel hidden">
+        <h2>Videos ja vistos</h2>
+        <div id="seen-list" class="video-list"></div>
+      </section>
+    </main>
+
+    <details class="sync-panel">
+      <summary>Sincronizacao</summary>
+      <div class="sync-panel-body">
         <div class="sync-box">
           <label for="cloud-token">Sync na nuvem (GitHub Gist)</label>
           <div class="form-row">
@@ -87,22 +106,8 @@
           </div>
           <p class="hint">Leve seus canais e videos salvos para outro dispositivo.</p>
         </div>
-
-        <p id="status-message" class="status-message"></p>
-        <div id="channels-list" class="channels-list"></div>
-        <div id="feed-list" class="video-list"></div>
-      </section>
-
-      <section id="watch-later-section" class="panel hidden">
-        <h2>Videos salvos para assistir depois</h2>
-        <div id="watch-later-list" class="video-list"></div>
-      </section>
-
-      <section id="seen-section" class="panel hidden">
-        <h2>Videos ja vistos</h2>
-        <div id="seen-list" class="video-list"></div>
-      </section>
-    </main>
+      </div>
+    </details>
 
     <template id="video-card-template">
       <article class="video-card">
@@ -127,6 +132,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-4" defer></script>
+    <script src="./app.js?v=20260207-5" defer></script>
   </body>
 </html>
