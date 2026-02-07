@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260207-4" />
   </head>
   <body>
     <header class="site-header">
@@ -22,6 +22,7 @@
       <div class="tabs">
         <button id="tab-feed" class="tab-button active" type="button">FEED</button>
         <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
+        <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
       </div>
     </header>
 
@@ -56,6 +57,21 @@
         </div>
 
         <div class="sync-box">
+          <label for="cloud-token">Sync na nuvem (GitHub Gist)</label>
+          <div class="form-row">
+            <input id="cloud-token" type="password" placeholder="GitHub token com permissao gist" />
+            <button id="connect-cloud-sync" type="button">Conectar nuvem</button>
+          </div>
+          <div class="form-row">
+            <input id="cloud-gist-id" type="text" placeholder="Gist ID (opcional)" />
+            <button id="pull-cloud-sync" type="button">Sincronizar agora</button>
+          </div>
+          <p id="cloud-sync-status" class="hint">
+            Ao conectar, o app salva e atualiza automaticamente seus dados na nuvem.
+          </p>
+        </div>
+
+        <div class="sync-box">
           <label for="sync-code">Sincronizar entre dispositivos</label>
           <div class="form-row">
             <button id="generate-sync-code" type="button">Gerar codigo</button>
@@ -81,6 +97,11 @@
         <h2>Videos salvos para assistir depois</h2>
         <div id="watch-later-list" class="video-list"></div>
       </section>
+
+      <section id="seen-section" class="panel hidden">
+        <h2>Videos ja vistos</h2>
+        <div id="seen-list" class="video-list"></div>
+      </section>
     </main>
 
     <template id="video-card-template">
@@ -100,11 +121,12 @@
             </label>
             <button type="button" class="save-button">Salvar para assistir depois</button>
             <button type="button" class="remove-button hidden">Remover</button>
+            <button type="button" class="restore-button hidden">Mover para FEED</button>
           </div>
         </div>
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-3" defer></script>
+    <script src="./app.js?v=20260207-4" defer></script>
   </body>
 </html>

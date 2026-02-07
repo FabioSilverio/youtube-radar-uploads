@@ -58,6 +58,7 @@ body {
 .tabs {
   display: flex;
   gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .tab-button {
@@ -295,6 +296,11 @@ button:hover {
 .remove-button {
   border-color: var(--danger);
   background: var(--danger);
+}
+
+.restore-button {
+  border-color: #245b89;
+  background: #245b89;
 }
 
 .hidden {

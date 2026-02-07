@@ -1,15 +1,18 @@
 # Radar de Uploads YouTube
 
-App web com 2 secoes:
+App web com 3 secoes:
 
 - `FEED`: junta os ultimos videos dos canais que voce acompanha.
 - `ASSISTIR DEPOIS`: guarda os videos que voce salvou.
+- `JA VISTOS`: recebe os videos marcados como assistidos (saem do FEED).
 
 Tambem permite:
 
 - adicionar canais por URL (`/@canal`, `/channel/UC...`, `/user/...`, `/c/...`),
 - marcar video como `Ja assisti`,
-- salvar/remover videos em `Assistir Depois`.
+- salvar/remover videos em `Assistir Depois`,
+- sincronizacao por codigo/link entre dispositivos,
+- sincronizacao automatica em nuvem via GitHub Gist.
 
 ## Como usar
 
@@ -17,6 +20,14 @@ Tambem permite:
 2. Cole sua **YouTube API key** e clique em `Salvar chave`.
 3. Adicione URLs dos canais que quer acompanhar.
 4. Use `Atualizar feed` para buscar uploads recentes.
+5. Para nuvem automatica, informe um token GitHub com escopo `gist` e clique em `Conectar nuvem`.
+
+## Sync na nuvem (GitHub Gist)
+
+1. Gere um token GitHub (classic) com permissao `gist`.
+2. No app, cole o token em `Sync na nuvem`.
+3. Clique em `Conectar nuvem`.
+4. O app passa a sincronizar automaticamente seus canais, videos salvos e `JA VISTOS`.
 
 ## API Key (YouTube Data API v3)
 

@@ -1,23 +1,40 @@
 const STORAGE_KEY = "yt-radar-state-v2";
+const CLOUD_FILE_NAME = "youtube-radar-sync.json";
+const CLOUD_PULL_INTERVAL_MS = 45000;
 
 const state = {
   apiKey: "",
   channels: [],
   feedVideos: [],
   watchLater: [],
-  watchedMap: {}
+  seenVideos: [],
+  watchedMap: {},
+  lastModifiedAt: 0,
+  cloudSync: {
+    enabled: false,
+    token: "",
+    gistId: "",
+    lastSyncedAt: 0
+  }
 };
 
 const refs = {
   tabFeed: document.querySelector("#tab-feed"),
   tabWatchLater: document.querySelector("#tab-watch-later"),
+  tabSeen: document.querySelector("#tab-seen"),
   feedSection: document.querySelector("#feed-section"),
   watchLaterSection: document.querySelector("#watch-later-section"),
+  seenSection: document.querySelector("#seen-section"),
   apiKeyInput: document.querySelector("#api-key"),
   saveApiKeyBtn: document.querySelector("#save-api-key"),
   addChannelForm: document.querySelector("#add-channel-form"),
   channelUrlInput: document.querySelector("#channel-url"),
   refreshFeedBtn: document.querySelector("#refresh-feed"),
+  cloudTokenInput: document.querySelector("#cloud-token"),
+  cloudGistIdInput: document.querySelector("#cloud-gist-id"),
+  connectCloudSyncBtn: document.querySelector("#connect-cloud-sync"),
+  pullCloudSyncBtn: document.querySelector("#pull-cloud-sync"),
+  cloudSyncStatus: document.querySelector("#cloud-sync-status"),
   generateSyncCodeBtn: document.querySelector("#generate-sync-code"),
   copySyncLinkBtn: document.querySelector("#copy-sync-link"),
   importSyncCodeBtn: document.querySelector("#import-sync-code"),
@@ -25,18 +42,33 @@ const refs = {
   channelsList: document.querySelector("#channels-list"),
   feedList: document.querySelector("#feed-list"),
   watchLaterList: document.querySelector("#watch-later-list"),
+  seenList: document.querySelector("#seen-list"),
   statusMessage: document.querySelector("#status-message"),
   videoTemplate: document.querySelector("#video-card-template")
 };
+
+let cloudPushTimer = null;
+let cloudPullTimer = null;
+let cloudOperationInFlight = false;
+let suppressCloudPush = false;
 
 init();
 
 function init() {
   hydrateState();
   importFromSyncHash();
+  normalizeStateCollections();
   bindEvents();
   refs.apiKeyInput.value = state.apiKey;
+  refs.cloudTokenInput.value = state.cloudSync.token;
+  refs.cloudGistIdInput.value = state.cloudSync.gistId;
   render();
+  renderCloudSyncStatus();
+
+  if (hasCloudSyncConfig()) {
+    startCloudAutoSync();
+    syncFromCloud({ silent: true });
+  }
 
   if (!state.apiKey) {
     setStatus("Salve sua YouTube API key para carregar o feed.");
@@ -53,6 +85,7 @@ function init() {
 function bindEvents() {
   refs.tabFeed.addEventListener("click", () => showSection("feed"));
   refs.tabWatchLater.addEventListener("click", () => showSection("watchLater"));
+  refs.tabSeen.addEventListener("click", () => showSection("seen"));
 
   refs.saveApiKeyBtn.addEventListener("click", async () => {
     const key = refs.apiKeyInput.value.trim();
@@ -88,6 +121,8 @@ function bindEvents() {
 
   refs.refreshFeedBtn.addEventListener("click", refreshFeed);
   refs.channelsList.addEventListener("click", handleRemoveChannelClick);
+  refs.connectCloudSyncBtn.addEventListener("click", connectCloudSync);
+  refs.pullCloudSyncBtn.addEventListener("click", () => syncFromCloud({ silent: false }));
   refs.generateSyncCodeBtn.addEventListener("click", () => {
     refs.syncCodeInput.value = encodeSyncState();
     setStatus("Codigo de sincronizacao gerado.");
@@ -112,9 +147,10 @@ function bindEvents() {
     }
 
     try {
-      applyImportedState(decodeSyncState(token));
+      applyImportedState(decodeSyncState(token), { preserveCloud: true });
       refs.apiKeyInput.value = state.apiKey;
       render();
+      renderCloudSyncStatus();
       setStatus("Sincronizacao importada com sucesso.");
 
       if (state.channels.length > 0 && state.apiKey) {
@@ -128,10 +164,14 @@ function bindEvents() {
 
 function showSection(name) {
   const feedActive = name === "feed";
+  const watchLaterActive = name === "watchLater";
+  const seenActive = name === "seen";
   refs.tabFeed.classList.toggle("active", feedActive);
-  refs.tabWatchLater.classList.toggle("active", !feedActive);
+  refs.tabWatchLater.classList.toggle("active", watchLaterActive);
+  refs.tabSeen.classList.toggle("active", seenActive);
   refs.feedSection.classList.toggle("hidden", !feedActive);
-  refs.watchLaterSection.classList.toggle("hidden", feedActive);
+  refs.watchLaterSection.classList.toggle("hidden", !watchLaterActive);
+  refs.seenSection.classList.toggle("hidden", !seenActive);
 }
 
 async function addChannel(url) {
@@ -166,6 +206,7 @@ async function refreshFeed() {
 
   if (state.channels.length === 0) {
     state.feedVideos = [];
+    persist();
     renderFeed();
     setStatus("Adicione canais para montar seu feed.");
     return;
@@ -202,14 +243,26 @@ async function refreshFeed() {
     }
   }
 
-  state.feedVideos = Array.from(unique.values()).sort((a, b) => {
+  const sortedVideos = Array.from(unique.values()).sort((a, b) => {
     const da = new Date(a.publishedAt || 0).getTime();
     const db = new Date(b.publishedAt || 0).getTime();
     return db - da;
   });
 
+  const unseenVideos = [];
+  for (const video of sortedVideos) {
+    if (state.watchedMap[video.id]) {
+      upsertSeenVideo(video, { prepend: false });
+      continue;
+    }
+    unseenVideos.push(video);
+  }
+
+  state.feedVideos = unseenVideos;
+  state.watchLater = state.watchLater.filter((video) => !state.watchedMap[video.id]);
+
   persist();
-  renderFeed();
+  render();
 
   if (failures.length > 0) {
     setStatus(`Feed atualizado com alertas. Falha em: ${failures.join(", ")}`);
@@ -417,6 +470,7 @@ function render() {
   renderChannels();
   renderFeed();
   renderWatchLater();
+  renderSeen();
 }
 
 function renderChannels() {
@@ -439,10 +493,11 @@ function handleRemoveChannelClick(event) {
 
   state.channels = state.channels.filter((channel) => channel.channelId !== channelId);
   state.feedVideos = state.feedVideos.filter((video) => video.channelId !== channelId);
+  state.watchLater = state.watchLater.filter((video) => video.channelId !== channelId);
+  state.seenVideos = state.seenVideos.filter((video) => video.channelId !== channelId);
 
   persist();
-  renderChannels();
-  renderFeed();
+  render();
 
   if (state.channels.length === 0) {
     setStatus("Canal removido. Sua lista esta vazia.");
@@ -461,7 +516,7 @@ function renderFeed() {
   }
 
   for (const video of state.feedVideos) {
-    const card = buildVideoCard(video, { showSaveButton: true, showRemoveButton: false });
+    const card = buildVideoCard(video, { mode: "feed" });
     refs.feedList.appendChild(card);
   }
 }
@@ -475,8 +530,22 @@ function renderWatchLater() {
   }
 
   for (const video of state.watchLater) {
-    const card = buildVideoCard(video, { showSaveButton: false, showRemoveButton: true });
+    const card = buildVideoCard(video, { mode: "watchLater" });
     refs.watchLaterList.appendChild(card);
+  }
+}
+
+function renderSeen() {
+  refs.seenList.innerHTML = "";
+
+  if (state.seenVideos.length === 0) {
+    refs.seenList.innerHTML = "<p class=\"empty\">Nenhum video marcado como visto.</p>";
+    return;
+  }
+
+  for (const video of state.seenVideos) {
+    const card = buildVideoCard(video, { mode: "seen" });
+    refs.seenList.appendChild(card);
   }
 }
 
@@ -491,6 +560,7 @@ function buildVideoCard(video, config) {
   const watchedCheckbox = node.querySelector(".watched-checkbox");
   const saveButton = node.querySelector(".save-button");
   const removeButton = node.querySelector(".remove-button");
+  const restoreButton = node.querySelector(".restore-button");
   const durationLabel = getDurationLabel(video);
 
   thumb.src = video.thumbnail || "";
@@ -501,35 +571,50 @@ function buildVideoCard(video, config) {
   durationText.textContent = `Duracao: ${durationLabel}`;
   durationBadge.textContent = durationLabel;
 
+  if (config.mode === "seen") {
+    watchedCheckbox.checked = true;
+    watchedCheckbox.disabled = true;
+    node.classList.add("watched");
+    saveButton.classList.add("hidden");
+    removeButton.classList.add("hidden");
+    restoreButton.classList.remove("hidden");
+    restoreButton.addEventListener("click", () => {
+      restoreFromSeen(video);
+    });
+    return node;
+  }
+
   const watched = Boolean(state.watchedMap[video.id]);
   watchedCheckbox.checked = watched;
   node.classList.toggle("watched", watched);
 
   watchedCheckbox.addEventListener("change", () => {
     if (watchedCheckbox.checked) {
-      state.watchedMap[video.id] = true;
-    } else {
-      delete state.watchedMap[video.id];
+      moveVideoToSeen(video);
+      return;
     }
 
+    delete state.watchedMap[video.id];
     persist();
-    renderFeed();
-    renderWatchLater();
+    render();
   });
 
-  if (config.showSaveButton) {
+  restoreButton.classList.add("hidden");
+
+  if (config.mode === "feed") {
     const isSaved = state.watchLater.some((item) => item.id === video.id);
     saveButton.classList.toggle("saved", isSaved);
     saveButton.textContent = isSaved ? "Salvo" : "Salvar para assistir depois";
-
     saveButton.addEventListener("click", () => {
       saveToWatchLater(video);
     });
-  } else {
-    saveButton.classList.add("hidden");
+    removeButton.classList.add("hidden");
+    return node;
   }
 
-  if (config.showRemoveButton) {
+  saveButton.classList.add("hidden");
+
+  if (config.mode === "watchLater") {
     removeButton.classList.remove("hidden");
     removeButton.addEventListener("click", () => {
       removeFromWatchLater(video.id);
@@ -540,6 +625,11 @@ function buildVideoCard(video, config) {
 }
 
 function saveToWatchLater(video) {
+  if (state.watchedMap[video.id]) {
+    setStatus("Este video ja esta marcado como visto.");
+    return;
+  }
+
   if (state.watchLater.some((item) => item.id === video.id)) {
     setStatus("Video ja salvo em Assistir Depois.");
     return;
@@ -555,9 +645,46 @@ function saveToWatchLater(video) {
 function removeFromWatchLater(videoId) {
   state.watchLater = state.watchLater.filter((video) => video.id !== videoId);
   persist();
-  renderFeed();
-  renderWatchLater();
+  render();
   setStatus("Video removido da lista.");
+}
+
+function moveVideoToSeen(video) {
+  state.watchedMap[video.id] = true;
+  state.feedVideos = state.feedVideos.filter((item) => item.id !== video.id);
+  state.watchLater = state.watchLater.filter((item) => item.id !== video.id);
+  upsertSeenVideo(video, { prepend: true });
+  persist();
+  render();
+  setStatus("Video movido para JA VISTOS.");
+}
+
+function restoreFromSeen(video) {
+  delete state.watchedMap[video.id];
+  state.seenVideos = state.seenVideos.filter((item) => item.id !== video.id);
+
+  if (!state.feedVideos.some((item) => item.id === video.id)) {
+    state.feedVideos.unshift(video);
+  }
+
+  persist();
+  render();
+  setStatus("Video voltou para o FEED.");
+}
+
+function upsertSeenVideo(video, options = { prepend: false }) {
+  const index = state.seenVideos.findIndex((item) => item.id === video.id);
+  if (index >= 0) {
+    state.seenVideos[index] = { ...state.seenVideos[index], ...video };
+    return;
+  }
+
+  if (options.prepend) {
+    state.seenVideos.unshift(video);
+    return;
+  }
+
+  state.seenVideos.push(video);
 }
 
 function formatDate(value) {
@@ -607,11 +734,322 @@ function setStatus(message) {
   refs.statusMessage.textContent = message;
 }
 
+function normalizeStateCollections() {
+  state.channels = dedupeByKey(state.channels, "channelId");
+  state.feedVideos = dedupeByKey(state.feedVideos, "id");
+  state.watchLater = dedupeByKey(state.watchLater, "id");
+  state.seenVideos = dedupeByKey(state.seenVideos, "id");
+
+  for (const video of [...state.feedVideos, ...state.watchLater]) {
+    if (state.watchedMap[video.id]) {
+      upsertSeenVideo(video, { prepend: false });
+    }
+  }
+
+  state.feedVideos = state.feedVideos.filter((video) => !state.watchedMap[video.id]);
+  state.watchLater = state.watchLater.filter((video) => !state.watchedMap[video.id]);
+}
+
+function dedupeByKey(items, key) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const map = new Map();
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const value = item[key];
+    if (!value || map.has(value)) continue;
+    map.set(value, item);
+  }
+
+  return Array.from(map.values());
+}
+
+function hasCloudSyncConfig() {
+  return Boolean(state.cloudSync.enabled && state.cloudSync.token && state.cloudSync.gistId);
+}
+
+function renderCloudSyncStatus() {
+  if (!refs.cloudSyncStatus) return;
+
+  if (!hasCloudSyncConfig()) {
+    refs.cloudSyncStatus.textContent =
+      "Ao conectar, o app salva e atualiza automaticamente seus dados na nuvem.";
+    return;
+  }
+
+  const lastSync = state.cloudSync.lastSyncedAt
+    ? new Date(state.cloudSync.lastSyncedAt).toLocaleString("pt-BR")
+    : "agora";
+
+  refs.cloudSyncStatus.textContent = `Sync ativo no Gist ${state.cloudSync.gistId.slice(0, 8)}... | ultimo sync: ${lastSync}`;
+}
+
+async function connectCloudSync() {
+  const token = refs.cloudTokenInput.value.trim();
+  const gistIdInput = refs.cloudGistIdInput.value.trim();
+
+  if (!token) {
+    setStatus("Informe um token do GitHub com permissao gist.");
+    return;
+  }
+
+  setStatus("Conectando sync na nuvem...");
+
+  try {
+    const gistId = await ensureCloudGist(token, gistIdInput);
+    state.cloudSync.enabled = true;
+    state.cloudSync.token = token;
+    state.cloudSync.gistId = gistId;
+
+    refs.cloudGistIdInput.value = gistId;
+    persist({ skipCloudPush: true });
+    renderCloudSyncStatus();
+
+    await syncFromCloud({ silent: true });
+    await pushCloudState({ silent: true });
+    startCloudAutoSync();
+    setStatus("Sync na nuvem conectado. Agora a sincronizacao e automatica.");
+  } catch (error) {
+    setStatus(`Falha ao conectar sync na nuvem: ${error.message}`);
+  }
+}
+
+function startCloudAutoSync() {
+  if (cloudPullTimer) {
+    clearInterval(cloudPullTimer);
+  }
+
+  cloudPullTimer = setInterval(() => {
+    syncFromCloud({ silent: true });
+  }, CLOUD_PULL_INTERVAL_MS);
+}
+
+function scheduleCloudPush() {
+  if (!hasCloudSyncConfig()) {
+    return;
+  }
+
+  if (cloudPushTimer) {
+    clearTimeout(cloudPushTimer);
+  }
+
+  cloudPushTimer = setTimeout(() => {
+    pushCloudState({ silent: true });
+  }, 900);
+}
+
+async function syncFromCloud(options = {}) {
+  const { silent = false } = options;
+
+  if (!hasCloudSyncConfig()) {
+    if (!silent) {
+      setStatus("Conecte o sync na nuvem primeiro.");
+    }
+    return;
+  }
+
+  if (cloudOperationInFlight) {
+    return;
+  }
+
+  cloudOperationInFlight = true;
+
+  try {
+    const gist = await githubApiRequest({
+      method: "GET",
+      path: `/gists/${state.cloudSync.gistId}`,
+      token: state.cloudSync.token
+    });
+
+    const payload = await parseCloudPayload(gist);
+
+    if (!payload || !payload.data) {
+      throw new Error("Payload da nuvem invalido.");
+    }
+
+    const remoteUpdatedAt = Number(payload.updatedAt || 0);
+    const localUpdatedAt = Number(state.lastModifiedAt || 0);
+
+    if (remoteUpdatedAt > localUpdatedAt) {
+      suppressCloudPush = true;
+      applyImportedState(payload.data, { preserveCloud: true, keepTimestamp: true });
+      state.lastModifiedAt = remoteUpdatedAt;
+      persist({ skipCloudPush: true, keepTimestamp: true });
+      refs.apiKeyInput.value = state.apiKey;
+      render();
+
+      if (state.apiKey && state.channels.length > 0) {
+        await refreshFeed();
+      }
+
+      if (!silent) {
+        setStatus("Dados da nuvem sincronizados.");
+      }
+    } else if (!silent) {
+      setStatus("Nuvem ja esta sincronizada.");
+    }
+
+    state.cloudSync.lastSyncedAt = Date.now();
+    persist({ skipCloudPush: true, keepTimestamp: true });
+    renderCloudSyncStatus();
+  } catch (error) {
+    if (!silent) {
+      setStatus(`Falha ao sincronizar nuvem: ${error.message}`);
+    }
+  } finally {
+    suppressCloudPush = false;
+    cloudOperationInFlight = false;
+  }
+}
+
+async function pushCloudState(options = {}) {
+  const { silent = false } = options;
+
+  if (!hasCloudSyncConfig()) {
+    return;
+  }
+
+  if (cloudOperationInFlight) {
+    return;
+  }
+
+  cloudOperationInFlight = true;
+
+  try {
+    await githubApiRequest({
+      method: "PATCH",
+      path: `/gists/${state.cloudSync.gistId}`,
+      token: state.cloudSync.token,
+      body: {
+        files: {
+          [CLOUD_FILE_NAME]: {
+            content: buildCloudDocument()
+          }
+        }
+      }
+    });
+
+    state.cloudSync.lastSyncedAt = Date.now();
+    persist({ skipCloudPush: true, keepTimestamp: true });
+    renderCloudSyncStatus();
+
+    if (!silent) {
+      setStatus("Dados enviados para a nuvem.");
+    }
+  } catch (error) {
+    if (!silent) {
+      setStatus(`Falha ao enviar dados para nuvem: ${error.message}`);
+    }
+  } finally {
+    cloudOperationInFlight = false;
+  }
+}
+
+async function ensureCloudGist(token, gistId) {
+  if (gistId) {
+    await githubApiRequest({
+      method: "GET",
+      path: `/gists/${gistId}`,
+      token
+    });
+    return gistId;
+  }
+
+  const created = await githubApiRequest({
+    method: "POST",
+    path: "/gists",
+    token,
+    body: {
+      description: "YouTube Radar cloud sync",
+      public: false,
+      files: {
+        [CLOUD_FILE_NAME]: {
+          content: buildCloudDocument()
+        }
+      }
+    }
+  });
+
+  if (!created?.id) {
+    throw new Error("Nao foi possivel criar o Gist de sincronizacao.");
+  }
+
+  return created.id;
+}
+
+function buildCloudDocument() {
+  return JSON.stringify(
+    {
+      version: 1,
+      updatedAt: state.lastModifiedAt || Date.now(),
+      data: {
+        apiKey: state.apiKey,
+        channels: state.channels,
+        watchLater: state.watchLater,
+        seenVideos: state.seenVideos,
+        watchedMap: state.watchedMap
+      }
+    },
+    null,
+    2
+  );
+}
+
+async function parseCloudPayload(gistResponse) {
+  const files = gistResponse?.files || {};
+  const preferred = files[CLOUD_FILE_NAME] || Object.values(files)[0];
+
+  if (!preferred) {
+    throw new Error("Gist de sincronizacao vazio.");
+  }
+
+  let raw = preferred.content;
+
+  if ((!raw || preferred.truncated) && preferred.raw_url) {
+    const response = await fetch(preferred.raw_url);
+    if (!response.ok) {
+      throw new Error("Nao consegui ler o arquivo de sincronizacao.");
+    }
+    raw = await response.text();
+  }
+
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    throw new Error("Arquivo de sincronizacao invalido.");
+  }
+}
+
+async function githubApiRequest({ method, path, token, body }) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(body ? { "Content-Type": "application/json" } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = data?.message || `GitHub API retornou ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
 function encodeSyncState() {
   const payload = {
     apiKey: state.apiKey,
     channels: state.channels,
     watchLater: state.watchLater,
+    seenVideos: state.seenVideos,
     watchedMap: state.watchedMap
   };
 
@@ -630,17 +1068,32 @@ function decodeSyncState(token) {
   return parsed;
 }
 
-function applyImportedState(payload) {
+function applyImportedState(payload, options = {}) {
+  const { preserveCloud = false, keepTimestamp = false } = options;
+
   if (!payload || typeof payload !== "object") {
     throw new Error("Codigo de sincronizacao invalido.");
   }
 
+  const previousCloud = { ...state.cloudSync };
+
   state.apiKey = typeof payload.apiKey === "string" ? payload.apiKey : "";
   state.channels = Array.isArray(payload.channels) ? payload.channels : [];
   state.watchLater = Array.isArray(payload.watchLater) ? payload.watchLater : [];
+  state.seenVideos = Array.isArray(payload.seenVideos) ? payload.seenVideos : [];
   state.watchedMap = payload.watchedMap && typeof payload.watchedMap === "object" ? payload.watchedMap : {};
   state.feedVideos = [];
-  persist();
+
+  if (!keepTimestamp) {
+    state.lastModifiedAt = Date.now();
+  }
+
+  if (preserveCloud) {
+    state.cloudSync = previousCloud;
+  }
+
+  normalizeStateCollections();
+  persist({ skipCloudPush: true, keepTimestamp });
 }
 
 function importFromSyncHash() {
@@ -652,7 +1105,7 @@ function importFromSyncHash() {
   const token = decodeURIComponent(hash.slice(6));
 
   try {
-    applyImportedState(decodeSyncState(token));
+    applyImportedState(decodeSyncState(token), { preserveCloud: true });
     if (window.history && window.history.replaceState) {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     } else {
@@ -678,16 +1131,30 @@ function base64Decode(value) {
   return new TextDecoder().decode(bytes);
 }
 
-function persist() {
+function persist(options = {}) {
+  const { skipCloudPush = false, keepTimestamp = false } = options;
+
+  if (!keepTimestamp) {
+    state.lastModifiedAt = Date.now();
+  }
+
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
       apiKey: state.apiKey,
       channels: state.channels,
+      feedVideos: state.feedVideos,
       watchLater: state.watchLater,
-      watchedMap: state.watchedMap
+      seenVideos: state.seenVideos,
+      watchedMap: state.watchedMap,
+      lastModifiedAt: state.lastModifiedAt,
+      cloudSync: state.cloudSync
     })
   );
+
+  if (!skipCloudPush && !suppressCloudPush) {
+    scheduleCloudPush();
+  }
 }
 
 function hydrateState() {
@@ -705,12 +1172,33 @@ function hydrateState() {
       state.channels = parsed.channels;
     }
 
+    if (Array.isArray(parsed.feedVideos)) {
+      state.feedVideos = parsed.feedVideos;
+    }
+
     if (Array.isArray(parsed.watchLater)) {
       state.watchLater = parsed.watchLater;
     }
 
+    if (Array.isArray(parsed.seenVideos)) {
+      state.seenVideos = parsed.seenVideos;
+    }
+
     if (parsed.watchedMap && typeof parsed.watchedMap === "object") {
       state.watchedMap = parsed.watchedMap;
+    }
+
+    if (typeof parsed.lastModifiedAt === "number") {
+      state.lastModifiedAt = parsed.lastModifiedAt;
+    }
+
+    if (parsed.cloudSync && typeof parsed.cloudSync === "object") {
+      state.cloudSync = {
+        enabled: Boolean(parsed.cloudSync.enabled),
+        token: typeof parsed.cloudSync.token === "string" ? parsed.cloudSync.token : "",
+        gistId: typeof parsed.cloudSync.gistId === "string" ? parsed.cloudSync.gistId : "",
+        lastSyncedAt: Number(parsed.cloudSync.lastSyncedAt || 0)
+      };
     }
   } catch (error) {
     console.error("Falha ao carregar estado local", error);
