@@ -446,6 +446,7 @@ function buildVideoCard(video, config) {
   const durationBadge = node.querySelector(".duration-badge");
   const link = node.querySelector("a");
   const meta = node.querySelector(".meta");
+  const durationText = node.querySelector(".duration-text");
   const watchedCheckbox = node.querySelector(".watched-checkbox");
   const saveButton = node.querySelector(".save-button");
   const removeButton = node.querySelector(".remove-button");
@@ -455,7 +456,8 @@ function buildVideoCard(video, config) {
   thumb.alt = `Thumbnail: ${video.title}`;
   link.href = video.url;
   link.textContent = video.title;
-  meta.textContent = `${video.channelTitle} - ${formatDate(video.publishedAt)} - ${durationLabel}`;
+  meta.textContent = `${video.channelTitle} - ${formatDate(video.publishedAt)}`;
+  durationText.textContent = `Duracao: ${durationLabel}`;
   durationBadge.textContent = durationLabel;
 
   const watched = Boolean(state.watchedMap[video.id]);
@@ -534,7 +536,7 @@ function formatDate(value) {
 function getDurationLabel(video) {
   const label = formatIsoDuration(video.duration);
   if (label) return label;
-  return "N/A";
+  return "Indisponivel";
 }
 
 function formatIsoDuration(isoDuration) {
@@ -542,20 +544,22 @@ function formatIsoDuration(isoDuration) {
     return "";
   }
 
-  const match = isoDuration.match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  const match = isoDuration.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
   if (!match) {
     return "";
   }
 
-  const hours = Number(match[1] || 0);
-  const minutes = Number(match[2] || 0);
-  const seconds = Number(match[3] || 0);
+  const days = Number(match[1] || 0);
+  const hours = Number(match[2] || 0);
+  const minutes = Number(match[3] || 0);
+  const seconds = Number(match[4] || 0);
+  const totalHours = days * 24 + hours;
 
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  if (totalHours > 0) {
+    return `${totalHours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${Math.max(0, minutes)}:${String(seconds).padStart(2, "0")}`;
 }
 
 function setStatus(message) {
