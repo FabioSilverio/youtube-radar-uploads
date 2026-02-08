@@ -1,6 +1,7 @@
 const STORAGE_KEY = "yt-radar-state-v2";
 const CLOUD_FILE_NAME = "youtube-radar-sync.json";
 const CLOUD_PULL_INTERVAL_MS = 45000;
+const CHANNEL_ID_REGEX = /^UC[\w-]{20,}$/;
 const CHANNEL_CATEGORIES = [
   { id: "news", label: "News" },
   { id: "entertainment", label: "Entretenimento" },
@@ -251,11 +252,17 @@ async function refreshFeed() {
 
   setStatus("Atualizando feed...");
 
+  let repairedChannels = false;
   const results = await Promise.all(
     state.channels.map(async (channel) => {
       try {
-        const videos = await fetchLatestVideos(channel);
-        return { channel, videos };
+        const prepared = await ensureChannelReadyForFeed(channel);
+        if (prepared.repaired) {
+          repairedChannels = true;
+        }
+
+        const videos = await fetchLatestVideos(prepared.channel);
+        return { channel: prepared.channel, videos };
       } catch (error) {
         return { channel, error };
       }
@@ -267,10 +274,26 @@ async function refreshFeed() {
 
   for (const result of results) {
     if (result.error) {
-      failures.push(result.channel.channelTitle || result.channel.channelId);
+      failures.push({
+        channel: result.channel.channelTitle || result.channel.channelId || "Canal",
+        reason: result.error?.message || "Erro desconhecido"
+      });
       continue;
     }
     mergedVideos.push(...result.videos);
+  }
+
+  if (failures.length > 0 && mergedVideos.length === 0) {
+    if (repairedChannels) {
+      normalizeStateCollections();
+      persist();
+      renderChannelsManager();
+    }
+
+    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
+    const failedChannels = failures.map((item) => item.channel).join(", ");
+    setStatus(`Nao consegui atualizar o feed agora. Motivo: ${reasonSummary}. Canais com falha: ${failedChannels}`);
+    return;
   }
 
   const unique = new Map();
@@ -298,11 +321,16 @@ async function refreshFeed() {
   state.feedVideos = unseenVideos;
   state.watchLater = state.watchLater.filter((video) => !state.watchedMap[video.id]);
 
+  if (repairedChannels) {
+    normalizeStateCollections();
+  }
   persist();
   render();
 
   if (failures.length > 0) {
-    setStatus(`Feed atualizado com alertas. Falha em: ${failures.join(", ")}`);
+    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
+    const failedChannels = failures.map((item) => item.channel).join(", ");
+    setStatus(`Feed atualizado com alertas. Falha em: ${failedChannels}. Motivo: ${reasonSummary}`);
     return;
   }
 
@@ -352,6 +380,34 @@ async function fetchLatestVideos(channel) {
   return videos;
 }
 
+async function ensureChannelReadyForFeed(channel) {
+  if (isValidChannelId(channel.channelId)) {
+    return { channel, repaired: false };
+  }
+
+  const lookupInput = channel.sourceUrl || channel.channelUrl || channel.channelTitle;
+  if (!lookupInput) {
+    throw new Error("Canal sem identificador valido.");
+  }
+
+  const resolved = await resolveChannelFromInput(lookupInput);
+  const repairedChannel = {
+    ...channel,
+    channelId: resolved.channelId,
+    channelTitle: resolved.channelTitle || channel.channelTitle || resolved.channelId,
+    channelUrl: resolved.channelUrl || channel.channelUrl || `https://www.youtube.com/channel/${resolved.channelId}`,
+    sourceUrl: channel.sourceUrl || resolved.sourceUrl || lookupInput,
+    category: sanitizeCategory(channel.category)
+  };
+
+  const index = state.channels.indexOf(channel);
+  if (index >= 0) {
+    state.channels[index] = repairedChannel;
+  }
+
+  return { channel: repairedChannel, repaired: true };
+}
+
 async function fetchVideoDurations(videoIds) {
   const ids = videoIds.filter(Boolean);
   if (ids.length === 0) {
@@ -376,7 +432,7 @@ async function fetchVideoDurations(videoIds) {
 async function resolveChannelFromInput(input) {
   const raw = input.trim();
 
-  if (/^UC[\w-]{20,}$/.test(raw)) {
+  if (CHANNEL_ID_REGEX.test(raw)) {
     return resolveChannelById(raw, `https://www.youtube.com/channel/${raw}`);
   }
 
@@ -401,7 +457,7 @@ async function resolveChannelFromInput(input) {
     throw new Error("URL de canal nao identificada.");
   }
 
-  if (pathParts[0] === "channel" && /^UC[\w-]{20,}$/.test(pathParts[1] || "")) {
+  if (pathParts[0] === "channel" && CHANNEL_ID_REGEX.test(pathParts[1] || "")) {
     return resolveChannelById(pathParts[1], raw);
   }
 
@@ -1037,11 +1093,14 @@ function setStatus(message) {
 }
 
 function normalizeStateCollections() {
+  state.channels = state.channels
+    .filter((channel) => channel && typeof channel === "object")
+    .map((channel) => ({
+      ...channel,
+      channelId: typeof channel.channelId === "string" ? channel.channelId.trim() : "",
+      category: sanitizeCategory(channel.category)
+    }));
   state.channels = dedupeByKey(state.channels, "channelId");
-  state.channels = state.channels.map((channel) => ({
-    ...channel,
-    category: sanitizeCategory(channel.category)
-  }));
 
   state.articles = dedupeArticles(state.articles);
   state.feedVideos = dedupeByKey(state.feedVideos, "id");
@@ -1107,6 +1166,10 @@ function dedupeArticles(items) {
   }
 
   return Array.from(map.values());
+}
+
+function isValidChannelId(value) {
+  return typeof value === "string" && CHANNEL_ID_REGEX.test(value.trim());
 }
 
 function hasCloudSyncConfig() {
