@@ -1,15 +1,17 @@
 # Radar de Uploads YouTube
 
-App web com 4 secoes:
+App web com 5 secoes:
 
 - `FEED`: junta os ultimos videos por categoria (`News`, `Entretenimento`, `Entrevistas`).
 - `CANAIS`: area para adicionar/remover canais e definir categoria de cada canal.
+- `ARTIGOS`: salva links para ler depois com imagem, subtitulo e veiculo.
 - `ASSISTIR DEPOIS`: guarda os videos que voce salvou.
 - `JA VISTOS`: recebe os videos marcados como assistidos (saem do FEED).
 
 Tambem permite:
 
 - adicionar canais por URL (`/@canal`, `/channel/UC...`, `/user/...`, `/c/...`),
+- salvar artigos por link para leitura posterior,
 - marcar video como `Ja assisti`,
 - salvar/remover videos em `Assistir Depois`,
 - sincronizacao por codigo/link entre dispositivos,

@@ -11,6 +11,7 @@ const state = {
   apiKey: "",
   channels: [],
   feedVideos: [],
+  articles: [],
   watchLater: [],
   seenVideos: [],
   watchedMap: {},
@@ -26,10 +27,12 @@ const state = {
 const refs = {
   tabFeed: document.querySelector("#tab-feed"),
   tabChannels: document.querySelector("#tab-channels"),
+  tabArticles: document.querySelector("#tab-articles"),
   tabWatchLater: document.querySelector("#tab-watch-later"),
   tabSeen: document.querySelector("#tab-seen"),
   feedSection: document.querySelector("#feed-section"),
   channelsSection: document.querySelector("#channels-section"),
+  articlesSection: document.querySelector("#articles-section"),
   watchLaterSection: document.querySelector("#watch-later-section"),
   seenSection: document.querySelector("#seen-section"),
   apiKeyInput: document.querySelector("#api-key"),
@@ -37,6 +40,8 @@ const refs = {
   addChannelForm: document.querySelector("#add-channel-form"),
   channelUrlInput: document.querySelector("#channel-url"),
   channelCategoryInput: document.querySelector("#channel-category"),
+  addArticleForm: document.querySelector("#add-article-form"),
+  articleUrlInput: document.querySelector("#article-url"),
   refreshFeedBtn: document.querySelector("#refresh-feed"),
   cloudTokenInput: document.querySelector("#cloud-token"),
   cloudGistIdInput: document.querySelector("#cloud-gist-id"),
@@ -49,6 +54,7 @@ const refs = {
   syncCodeInput: document.querySelector("#sync-code"),
   channelsList: document.querySelector("#channels-list"),
   feedList: document.querySelector("#feed-list"),
+  articleList: document.querySelector("#article-list"),
   watchLaterList: document.querySelector("#watch-later-list"),
   seenList: document.querySelector("#seen-list"),
   statusMessage: document.querySelector("#status-message"),
@@ -93,6 +99,7 @@ function init() {
 function bindEvents() {
   refs.tabFeed.addEventListener("click", () => showSection("feed"));
   refs.tabChannels.addEventListener("click", () => showSection("channels"));
+  refs.tabArticles.addEventListener("click", () => showSection("articles"));
   refs.tabWatchLater.addEventListener("click", () => showSection("watchLater"));
   refs.tabSeen.addEventListener("click", () => showSection("seen"));
 
@@ -129,9 +136,17 @@ function bindEvents() {
     await addChannel(url, category);
   });
 
+  refs.addArticleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = refs.articleUrlInput.value.trim();
+    if (!url) return;
+    await addArticle(url);
+  });
+
   refs.refreshFeedBtn.addEventListener("click", refreshFeed);
   refs.channelsList.addEventListener("click", handleChannelsListClick);
   refs.channelsList.addEventListener("change", handleChannelsListChange);
+  refs.articleList.addEventListener("click", handleArticleListClick);
   refs.connectCloudSyncBtn.addEventListener("click", connectCloudSync);
   refs.pullCloudSyncBtn.addEventListener("click", () => syncFromCloud({ silent: false }));
   refs.generateSyncCodeBtn.addEventListener("click", () => {
@@ -176,14 +191,17 @@ function bindEvents() {
 function showSection(name) {
   const feedActive = name === "feed";
   const channelsActive = name === "channels";
+  const articlesActive = name === "articles";
   const watchLaterActive = name === "watchLater";
   const seenActive = name === "seen";
   refs.tabFeed.classList.toggle("active", feedActive);
   refs.tabChannels.classList.toggle("active", channelsActive);
+  refs.tabArticles.classList.toggle("active", articlesActive);
   refs.tabWatchLater.classList.toggle("active", watchLaterActive);
   refs.tabSeen.classList.toggle("active", seenActive);
   refs.feedSection.classList.toggle("hidden", !feedActive);
   refs.channelsSection.classList.toggle("hidden", !channelsActive);
+  refs.articlesSection.classList.toggle("hidden", !articlesActive);
   refs.watchLaterSection.classList.toggle("hidden", !watchLaterActive);
   refs.seenSection.classList.toggle("hidden", !seenActive);
 }
@@ -488,6 +506,7 @@ async function callYouTube(endpoint, params) {
 function render() {
   renderChannelsManager();
   renderFeed();
+  renderArticles();
   renderWatchLater();
   renderSeen();
 }
@@ -596,6 +615,143 @@ function renderFeed() {
     group.appendChild(list);
     refs.feedList.appendChild(group);
   }
+}
+
+async function addArticle(inputUrl) {
+  setStatus("Buscando previa do artigo...");
+
+  try {
+    const normalizedUrl = normalizeHttpUrl(inputUrl);
+    const existing = state.articles.find((item) => item.url === normalizedUrl);
+    if (existing) {
+      setStatus("Esse artigo ja esta salvo.");
+      refs.articleUrlInput.value = "";
+      return;
+    }
+
+    const preview = await fetchArticlePreview(normalizedUrl);
+    state.articles.unshift(preview);
+    refs.articleUrlInput.value = "";
+    persist();
+    renderArticles();
+    setStatus("Artigo salvo para ler depois.");
+  } catch (error) {
+    setStatus(error.message || "Nao foi possivel salvar esse artigo.");
+  }
+}
+
+async function fetchArticlePreview(url) {
+  const parsed = new URL(url);
+
+  const fallback = {
+    id: `article-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    url,
+    title: `Artigo em ${parsed.hostname.replace(/^www\./, "")}`,
+    subtitle: "Sem subtitulo disponivel.",
+    source: parsed.hostname.replace(/^www\./, ""),
+    image: buildArticleFallbackImage(parsed.hostname.replace(/^www\./, "")),
+    savedAt: Date.now()
+  };
+
+  try {
+    const apiUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&video=false&audio=false`;
+    const response = await fetch(apiUrl);
+    const json = await response.json();
+
+    if (!response.ok || json.status !== "success") {
+      return fallback;
+    }
+
+    const data = json.data || {};
+    const title = (data.title || fallback.title).trim();
+    const subtitle = truncateText(data.description || fallback.subtitle, 180);
+    const source = (data.publisher || data.author || fallback.source).trim();
+    const image =
+      data.image?.url ||
+      data.logo?.url ||
+      data.screenshot?.url ||
+      fallback.image;
+
+    return {
+      ...fallback,
+      title,
+      subtitle,
+      source,
+      image
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function renderArticles() {
+  refs.articleList.innerHTML = "";
+
+  if (state.articles.length === 0) {
+    refs.articleList.innerHTML = "<p class=\"empty\">Nenhum artigo salvo ainda.</p>";
+    return;
+  }
+
+  for (const article of state.articles) {
+    const card = document.createElement("article");
+    card.className = "article-card";
+
+    const imageWrap = document.createElement("div");
+    imageWrap.className = "article-image-wrap";
+    const image = document.createElement("img");
+    image.className = "article-image";
+    image.loading = "lazy";
+    image.alt = `Imagem do artigo: ${article.title}`;
+    image.src = article.image || buildArticleFallbackImage(article.source || "artigo");
+    imageWrap.appendChild(image);
+
+    const content = document.createElement("div");
+    content.className = "article-content";
+
+    const source = document.createElement("p");
+    source.className = "article-source";
+    source.textContent = article.source || "Fonte";
+
+    const title = document.createElement("h3");
+    const link = document.createElement("a");
+    link.href = article.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = article.title || article.url;
+    title.appendChild(link);
+
+    const subtitle = document.createElement("p");
+    subtitle.className = "article-subtitle";
+    subtitle.textContent = article.subtitle || "Sem subtitulo disponivel.";
+
+    const actions = document.createElement("div");
+    actions.className = "article-actions";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "article-remove";
+    remove.textContent = "Remover";
+    remove.setAttribute("data-remove-article", article.id);
+    actions.appendChild(remove);
+
+    content.appendChild(source);
+    content.appendChild(title);
+    content.appendChild(subtitle);
+    content.appendChild(actions);
+
+    card.appendChild(imageWrap);
+    card.appendChild(content);
+    refs.articleList.appendChild(card);
+  }
+}
+
+function handleArticleListClick(event) {
+  const articleId = event.target.getAttribute("data-remove-article");
+  if (!articleId) return;
+
+  state.articles = state.articles.filter((item) => item.id !== articleId);
+  persist();
+  renderArticles();
+  setStatus("Artigo removido.");
 }
 
 function renderWatchLater() {
@@ -829,6 +985,52 @@ function getChannelCategoryById(channelId) {
   return sanitizeCategory(channel.category);
 }
 
+function normalizeHttpUrl(value) {
+  let candidate = value.trim();
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error("Informe uma URL valida do artigo.");
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("A URL do artigo precisa usar http ou https.");
+  }
+
+  return parsed.toString();
+}
+
+function truncateText(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1)}...`;
+}
+
+function getHostnameLabel(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Fonte";
+  }
+}
+
+function buildArticleFallbackImage(source) {
+  const label = encodeURIComponent((source || "Artigo").slice(0, 30));
+  return `https://dummyimage.com/1200x630/f1d9bf/5a3d2d.png&text=${label}`;
+}
+
 function setStatus(message) {
   refs.statusMessage.textContent = message;
 }
@@ -840,6 +1042,7 @@ function normalizeStateCollections() {
     category: sanitizeCategory(channel.category)
   }));
 
+  state.articles = dedupeArticles(state.articles);
   state.feedVideos = dedupeByKey(state.feedVideos, "id");
   state.watchLater = dedupeByKey(state.watchLater, "id");
   state.seenVideos = dedupeByKey(state.seenVideos, "id");
@@ -875,6 +1078,31 @@ function dedupeByKey(items, key) {
     const value = item[key];
     if (!value || map.has(value)) continue;
     map.set(value, item);
+  }
+
+  return Array.from(map.values());
+}
+
+function dedupeArticles(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const map = new Map();
+  for (const article of items) {
+    if (!article || typeof article !== "object") continue;
+    const url = typeof article.url === "string" ? article.url.trim() : "";
+    if (!url || map.has(url)) continue;
+
+    map.set(url, {
+      id: typeof article.id === "string" ? article.id : `article-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      url,
+      title: article.title || url,
+      subtitle: article.subtitle || "Sem subtitulo disponivel.",
+      source: article.source || getHostnameLabel(url),
+      image: article.image || buildArticleFallbackImage(getHostnameLabel(url)),
+      savedAt: Number(article.savedAt || Date.now())
+    });
   }
 
   return Array.from(map.values());
@@ -1101,6 +1329,7 @@ function buildCloudDocument() {
       data: {
         apiKey: state.apiKey,
         channels: state.channels,
+        articles: state.articles,
         watchLater: state.watchLater,
         seenVideos: state.seenVideos,
         watchedMap: state.watchedMap
@@ -1162,6 +1391,7 @@ function encodeSyncState() {
   const payload = {
     apiKey: state.apiKey,
     channels: state.channels,
+    articles: state.articles,
     watchLater: state.watchLater,
     seenVideos: state.seenVideos,
     watchedMap: state.watchedMap
@@ -1193,6 +1423,7 @@ function applyImportedState(payload, options = {}) {
 
   state.apiKey = typeof payload.apiKey === "string" ? payload.apiKey : "";
   state.channels = Array.isArray(payload.channels) ? payload.channels : [];
+  state.articles = Array.isArray(payload.articles) ? payload.articles : [];
   state.watchLater = Array.isArray(payload.watchLater) ? payload.watchLater : [];
   state.seenVideos = Array.isArray(payload.seenVideos) ? payload.seenVideos : [];
   state.watchedMap = payload.watchedMap && typeof payload.watchedMap === "object" ? payload.watchedMap : {};
@@ -1257,6 +1488,7 @@ function persist(options = {}) {
     JSON.stringify({
       apiKey: state.apiKey,
       channels: state.channels,
+      articles: state.articles,
       feedVideos: state.feedVideos,
       watchLater: state.watchLater,
       seenVideos: state.seenVideos,
@@ -1288,6 +1520,10 @@ function hydrateState() {
 
     if (Array.isArray(parsed.feedVideos)) {
       state.feedVideos = parsed.feedVideos;
+    }
+
+    if (Array.isArray(parsed.articles)) {
+      state.articles = parsed.articles;
     }
 
     if (Array.isArray(parsed.watchLater)) {

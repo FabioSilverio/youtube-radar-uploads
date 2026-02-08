@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-6" />
+    <link rel="stylesheet" href="./styles.css?v=20260207-7" />
   </head>
   <body>
     <header class="site-header">
@@ -22,6 +22,7 @@
       <div class="tabs">
         <button id="tab-feed" class="tab-button active" type="button">FEED</button>
         <button id="tab-channels" class="tab-button" type="button">CANAIS</button>
+        <button id="tab-articles" class="tab-button" type="button">ARTIGOS</button>
         <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
         <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
       </div>
@@ -77,6 +78,23 @@
           <h2>Canais cadastrados</h2>
           <div id="channels-list" class="channels-manage-list"></div>
         </div>
+      </section>
+
+      <section id="articles-section" class="panel hidden">
+        <form id="add-article-form" class="add-channel-form">
+          <label for="article-url">Link do artigo</label>
+          <div class="form-row">
+            <input
+              id="article-url"
+              type="url"
+              placeholder="https://site.com.br/materia"
+              required
+            />
+            <button type="submit">Salvar para ler depois</button>
+          </div>
+        </form>
+
+        <div id="article-list" class="article-list"></div>
       </section>
 
       <section id="watch-later-section" class="panel hidden">
@@ -150,6 +168,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-6" defer></script>
+    <script src="./app.js?v=20260207-7" defer></script>
   </body>
 </html>

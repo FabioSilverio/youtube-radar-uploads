@@ -308,6 +308,81 @@ button:hover {
   font-size: 1.05rem;
 }
 
+.article-list {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.article-card {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.article-image-wrap {
+  background: #f1d9bf;
+  min-height: 150px;
+}
+
+.article-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 150px;
+  object-fit: cover;
+}
+
+.article-content {
+  padding: 0.75rem 0.8rem 0.8rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.article-content h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.article-content h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.article-content h3 a:hover {
+  text-decoration: underline;
+}
+
+.article-source {
+  margin: 0;
+  font-size: 0.83rem;
+  color: var(--hot);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.article-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.article-actions {
+  margin-top: auto;
+}
+
+.article-remove {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
 .video-card {
   display: grid;
   grid-template-columns: minmax(360px, 48%) minmax(0, 1fr);
@@ -435,6 +510,14 @@ button:hover {
 
   .channel-row select {
     min-width: 0;
+  }
+
+  .article-card {
+    grid-template-columns: 1fr;
+  }
+
+  .article-content {
+    padding: 0.72rem;
   }
 
   .video-card {
