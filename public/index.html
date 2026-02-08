@@ -7,24 +7,29 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-7" />
+    <link rel="stylesheet" href="./styles.css?v=20260208-1" />
   </head>
   <body>
     <header class="site-header">
-      <div>
+      <div class="brand-block">
         <p class="eyebrow">Seu painel pessoal</p>
         <h1>Radar de Uploads</h1>
         <p class="subtitle">Centralize os videos novos dos canais que voce acompanha.</p>
       </div>
-      <div class="tabs">
-        <button id="tab-feed" class="tab-button active" type="button">FEED</button>
-        <button id="tab-channels" class="tab-button" type="button">CANAIS</button>
-        <button id="tab-articles" class="tab-button" type="button">ARTIGOS</button>
-        <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
-        <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
+      <div class="header-controls">
+        <div class="tabs">
+          <button id="tab-feed" class="tab-button active" type="button">FEED</button>
+          <button id="tab-channels" class="tab-button" type="button">CANAIS</button>
+          <button id="tab-articles" class="tab-button" type="button">ARTIGOS</button>
+          <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
+          <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
+          Modo noturno
+        </button>
       </div>
     </header>
 
@@ -168,6 +173,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-7" defer></script>
+    <script src="./app.js?v=20260208-1" defer></script>
   </body>
 </html>

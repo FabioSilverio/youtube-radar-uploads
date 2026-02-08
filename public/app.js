@@ -1,4 +1,5 @@
 const STORAGE_KEY = "yt-radar-state-v2";
+const THEME_STORAGE_KEY = "yt-radar-theme";
 const CLOUD_FILE_NAME = "youtube-radar-sync.json";
 const CLOUD_PULL_INTERVAL_MS = 45000;
 const CHANNEL_ID_REGEX = /^UC[\w-]{20,}$/;
@@ -31,6 +32,7 @@ const refs = {
   tabArticles: document.querySelector("#tab-articles"),
   tabWatchLater: document.querySelector("#tab-watch-later"),
   tabSeen: document.querySelector("#tab-seen"),
+  themeToggleBtn: document.querySelector("#theme-toggle"),
   feedSection: document.querySelector("#feed-section"),
   channelsSection: document.querySelector("#channels-section"),
   articlesSection: document.querySelector("#articles-section"),
@@ -67,10 +69,12 @@ let cloudPullTimer = null;
 let cloudOperationInFlight = false;
 let suppressCloudPush = false;
 let cloudPushQueued = false;
+let currentTheme = "light";
 
 init();
 
 function init() {
+  initTheme();
   hydrateState();
   importFromSyncHash();
   normalizeStateCollections();
@@ -104,6 +108,9 @@ function bindEvents() {
   refs.tabArticles.addEventListener("click", () => showSection("articles"));
   refs.tabWatchLater.addEventListener("click", () => showSection("watchLater"));
   refs.tabSeen.addEventListener("click", () => showSection("seen"));
+  if (refs.themeToggleBtn) {
+    refs.themeToggleBtn.addEventListener("click", toggleTheme);
+  }
 
   refs.saveApiKeyBtn.addEventListener("click", async () => {
     const key = refs.apiKeyInput.value.trim();
@@ -188,6 +195,37 @@ function bindEvents() {
       setStatus(error.message || "Codigo de sincronizacao invalido.");
     }
   });
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (saved === "light" || saved === "dark") {
+    applyTheme(saved);
+    return;
+  }
+
+  const prefersDark =
+    window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(prefersDark ? "dark" : "light");
+}
+
+function toggleTheme() {
+  const nextTheme = currentTheme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+}
+
+function applyTheme(theme) {
+  currentTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", currentTheme);
+  renderThemeToggle();
+}
+
+function renderThemeToggle() {
+  if (!refs.themeToggleBtn) return;
+  const darkEnabled = currentTheme === "dark";
+  refs.themeToggleBtn.textContent = darkEnabled ? "Modo claro" : "Modo noturno";
+  refs.themeToggleBtn.setAttribute("aria-pressed", darkEnabled ? "true" : "false");
 }
 
 function showSection(name) {
