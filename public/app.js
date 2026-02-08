@@ -338,18 +338,19 @@ async function refreshFeed() {
 }
 
 async function fetchLatestVideos(channel) {
-  const uploadsPlaylistId = await ensureUploadsPlaylistId(channel);
-  const data = await callYouTube("playlistItems", {
+  const data = await callYouTube("search", {
     part: "snippet",
-    playlistId: uploadsPlaylistId,
-    maxResults: "12"
+    channelId: channel.channelId,
+    maxResults: "12",
+    order: "date",
+    type: "video"
   });
 
   const items = Array.isArray(data.items) ? data.items : [];
   const videos = [];
 
   for (const item of items) {
-    const videoId = item?.snippet?.resourceId?.videoId;
+    const videoId = item?.id?.videoId;
     const snippet = item?.snippet;
 
     if (!videoId || !snippet) continue;
@@ -379,32 +380,6 @@ async function fetchLatestVideos(channel) {
   return videos;
 }
 
-async function ensureUploadsPlaylistId(channel) {
-  if (typeof channel.uploadsPlaylistId === "string" && channel.uploadsPlaylistId.trim()) {
-    return channel.uploadsPlaylistId.trim();
-  }
-
-  const data = await callYouTube("channels", {
-    part: "snippet,contentDetails",
-    id: channel.channelId,
-    maxResults: "1"
-  });
-
-  const item = data?.items?.[0];
-  const uploadsPlaylistId = item?.contentDetails?.relatedPlaylists?.uploads;
-
-  if (!uploadsPlaylistId) {
-    throw new Error("Nao encontrei playlist de uploads para esse canal.");
-  }
-
-  channel.uploadsPlaylistId = uploadsPlaylistId;
-  if (item?.snippet?.title) {
-    channel.channelTitle = item.snippet.title;
-  }
-
-  return uploadsPlaylistId;
-}
-
 async function ensureChannelReadyForFeed(channel) {
   if (isValidChannelId(channel.channelId)) {
     return { channel, repaired: false };
@@ -422,7 +397,6 @@ async function ensureChannelReadyForFeed(channel) {
     channelTitle: resolved.channelTitle || channel.channelTitle || resolved.channelId,
     channelUrl: resolved.channelUrl || channel.channelUrl || `https://www.youtube.com/channel/${resolved.channelId}`,
     sourceUrl: channel.sourceUrl || resolved.sourceUrl || lookupInput,
-    uploadsPlaylistId: resolved.uploadsPlaylistId || channel.uploadsPlaylistId || "",
     category: sanitizeCategory(channel.category)
   };
 
