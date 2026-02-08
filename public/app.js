@@ -65,6 +65,7 @@ let cloudPushTimer = null;
 let cloudPullTimer = null;
 let cloudOperationInFlight = false;
 let suppressCloudPush = false;
+let cloudPushQueued = false;
 
 init();
 
@@ -1173,6 +1174,11 @@ function scheduleCloudPush() {
     return;
   }
 
+  if (cloudOperationInFlight) {
+    cloudPushQueued = true;
+    return;
+  }
+
   if (cloudPushTimer) {
     clearTimeout(cloudPushTimer);
   }
@@ -1243,6 +1249,11 @@ async function syncFromCloud(options = {}) {
   } finally {
     suppressCloudPush = false;
     cloudOperationInFlight = false;
+
+    if (cloudPushQueued) {
+      cloudPushQueued = false;
+      scheduleCloudPush();
+    }
   }
 }
 
@@ -1254,10 +1265,12 @@ async function pushCloudState(options = {}) {
   }
 
   if (cloudOperationInFlight) {
+    cloudPushQueued = true;
     return;
   }
 
   cloudOperationInFlight = true;
+  cloudPushQueued = false;
 
   try {
     await githubApiRequest({
@@ -1286,6 +1299,11 @@ async function pushCloudState(options = {}) {
     }
   } finally {
     cloudOperationInFlight = false;
+
+    if (cloudPushQueued) {
+      cloudPushQueued = false;
+      scheduleCloudPush();
+    }
   }
 }
 
