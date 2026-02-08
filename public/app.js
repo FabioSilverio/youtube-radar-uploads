@@ -276,7 +276,8 @@ async function refreshFeed() {
     if (result.error) {
       failures.push({
         channel: result.channel.channelTitle || result.channel.channelId || "Canal",
-        reason: result.error?.message || "Erro desconhecido"
+        reason: result.error?.message || "Erro desconhecido",
+        isQuota: Boolean(result.error?.isQuota)
       });
       continue;
     }
@@ -290,8 +291,15 @@ async function refreshFeed() {
       renderChannelsManager();
     }
 
-    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
     const failedChannels = failures.map((item) => item.channel).join(", ");
+    if (failures.every((item) => item.isQuota)) {
+      setStatus(
+        `Feed operacional, mas a YouTube API atingiu o limite diario de quota. Canais sem atualizacao por isso: ${failedChannels}`
+      );
+      return;
+    }
+
+    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
     setStatus(`Nao consegui atualizar o feed agora. Motivo: ${reasonSummary}. Canais com falha: ${failedChannels}`);
     return;
   }
@@ -328,8 +336,15 @@ async function refreshFeed() {
   render();
 
   if (failures.length > 0) {
-    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
     const failedChannels = failures.map((item) => item.channel).join(", ");
+    if (failures.some((item) => item.isQuota)) {
+      setStatus(
+        `Feed atualizado parcialmente. Alguns canais nao atualizaram por limite diario de quota da YouTube API: ${failedChannels}`
+      );
+      return;
+    }
+
+    const reasonSummary = Array.from(new Set(failures.map((item) => item.reason))).slice(0, 2).join(" | ");
     setStatus(`Feed atualizado com alertas. Falha em: ${failedChannels}. Motivo: ${reasonSummary}`);
     return;
   }
@@ -575,17 +590,21 @@ async function callYouTube(endpoint, params) {
   const data = await response.json();
 
   if (!response.ok || data.error) {
+    const reasonCode = data?.error?.errors?.[0]?.reason || "";
     const message = humanizeYoutubeApiError(
       data?.error?.message ||
-      `Erro na YouTube API (${response.status}). Verifique sua chave e restricoes.`
+      `Erro na YouTube API (${response.status}). Verifique sua chave e restricoes.`,
+      reasonCode
     );
-    throw new Error(message);
+    const error = new Error(message);
+    error.isQuota = isQuotaReason(reasonCode) || isQuotaReason(message);
+    throw error;
   }
 
   return data;
 }
 
-function humanizeYoutubeApiError(rawMessage) {
+function humanizeYoutubeApiError(rawMessage, reasonCode = "") {
   const cleaned = stripHtml(rawMessage)
     .replace(/\s+/g, " ")
     .trim();
@@ -594,7 +613,7 @@ function humanizeYoutubeApiError(rawMessage) {
     return "Erro na YouTube API.";
   }
 
-  if (/quota/i.test(cleaned)) {
+  if (isQuotaReason(reasonCode) || isQuotaReason(cleaned)) {
     return "Quota da YouTube API excedida para hoje. Aguarde o reset diario ou use outra chave.";
   }
 
@@ -607,6 +626,14 @@ function humanizeYoutubeApiError(rawMessage) {
   }
 
   return cleaned;
+}
+
+function isQuotaReason(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return /quota|dailyLimitExceeded|quotaExceeded|exceeded your .*quota/i.test(value);
 }
 
 function stripHtml(value) {
