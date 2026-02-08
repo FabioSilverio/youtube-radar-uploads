@@ -338,19 +338,18 @@ async function refreshFeed() {
 }
 
 async function fetchLatestVideos(channel) {
-  const data = await callYouTube("search", {
+  const uploadsPlaylistId = await ensureUploadsPlaylistId(channel);
+  const data = await callYouTube("playlistItems", {
     part: "snippet",
-    channelId: channel.channelId,
-    maxResults: "12",
-    order: "date",
-    type: "video"
+    playlistId: uploadsPlaylistId,
+    maxResults: "12"
   });
 
   const items = Array.isArray(data.items) ? data.items : [];
   const videos = [];
 
   for (const item of items) {
-    const videoId = item?.id?.videoId;
+    const videoId = item?.snippet?.resourceId?.videoId;
     const snippet = item?.snippet;
 
     if (!videoId || !snippet) continue;
@@ -380,6 +379,32 @@ async function fetchLatestVideos(channel) {
   return videos;
 }
 
+async function ensureUploadsPlaylistId(channel) {
+  if (typeof channel.uploadsPlaylistId === "string" && channel.uploadsPlaylistId.trim()) {
+    return channel.uploadsPlaylistId.trim();
+  }
+
+  const data = await callYouTube("channels", {
+    part: "snippet,contentDetails",
+    id: channel.channelId,
+    maxResults: "1"
+  });
+
+  const item = data?.items?.[0];
+  const uploadsPlaylistId = item?.contentDetails?.relatedPlaylists?.uploads;
+
+  if (!uploadsPlaylistId) {
+    throw new Error("Nao encontrei playlist de uploads para esse canal.");
+  }
+
+  channel.uploadsPlaylistId = uploadsPlaylistId;
+  if (item?.snippet?.title) {
+    channel.channelTitle = item.snippet.title;
+  }
+
+  return uploadsPlaylistId;
+}
+
 async function ensureChannelReadyForFeed(channel) {
   if (isValidChannelId(channel.channelId)) {
     return { channel, repaired: false };
@@ -397,6 +422,7 @@ async function ensureChannelReadyForFeed(channel) {
     channelTitle: resolved.channelTitle || channel.channelTitle || resolved.channelId,
     channelUrl: resolved.channelUrl || channel.channelUrl || `https://www.youtube.com/channel/${resolved.channelId}`,
     sourceUrl: channel.sourceUrl || resolved.sourceUrl || lookupInput,
+    uploadsPlaylistId: resolved.uploadsPlaylistId || channel.uploadsPlaylistId || "",
     category: sanitizeCategory(channel.category)
   };
 
@@ -437,7 +463,7 @@ async function resolveChannelFromInput(input) {
   }
 
   if (/^@[\w.-]{3,}$/.test(raw)) {
-    return resolveChannelBySearch(raw, `https://www.youtube.com/${raw}`);
+    return resolveChannelByHandle(raw, `https://www.youtube.com/${raw}`);
   }
 
   let url;
@@ -462,7 +488,7 @@ async function resolveChannelFromInput(input) {
   }
 
   if (pathParts[0].startsWith("@")) {
-    return resolveChannelBySearch(pathParts[0], raw);
+    return resolveChannelByHandle(pathParts[0], raw);
   }
 
   if (pathParts[0] === "user" && pathParts[1]) {
@@ -478,7 +504,7 @@ async function resolveChannelFromInput(input) {
 
 async function resolveChannelById(channelId, sourceUrl) {
   const data = await callYouTube("channels", {
-    part: "snippet",
+    part: "snippet,contentDetails",
     id: channelId,
     maxResults: "1"
   });
@@ -492,13 +518,14 @@ async function resolveChannelById(channelId, sourceUrl) {
     channelId,
     channelTitle: item.snippet?.title || channelId,
     channelUrl: `https://www.youtube.com/channel/${channelId}`,
+    uploadsPlaylistId: item?.contentDetails?.relatedPlaylists?.uploads || "",
     sourceUrl
   };
 }
 
 async function resolveChannelByUsername(username, sourceUrl) {
   const data = await callYouTube("channels", {
-    part: "snippet",
+    part: "snippet,contentDetails",
     forUsername: username,
     maxResults: "1"
   });
@@ -509,11 +536,34 @@ async function resolveChannelByUsername(username, sourceUrl) {
       channelId: item.id,
       channelTitle: item.snippet?.title || username,
       channelUrl: `https://www.youtube.com/channel/${item.id}`,
+      uploadsPlaylistId: item?.contentDetails?.relatedPlaylists?.uploads || "",
       sourceUrl
     };
   }
 
   return resolveChannelBySearch(username, sourceUrl);
+}
+
+async function resolveChannelByHandle(handle, sourceUrl) {
+  const normalized = handle.startsWith("@") ? handle : `@${handle}`;
+  const data = await callYouTube("channels", {
+    part: "snippet,contentDetails",
+    forHandle: normalized,
+    maxResults: "1"
+  });
+
+  const item = data?.items?.[0];
+  if (item?.id) {
+    return {
+      channelId: item.id,
+      channelTitle: item.snippet?.title || normalized,
+      channelUrl: `https://www.youtube.com/channel/${item.id}`,
+      uploadsPlaylistId: item?.contentDetails?.relatedPlaylists?.uploads || "",
+      sourceUrl
+    };
+  }
+
+  return resolveChannelBySearch(normalized, sourceUrl);
 }
 
 async function resolveChannelBySearch(query, sourceUrl) {
@@ -551,13 +601,45 @@ async function callYouTube(endpoint, params) {
   const data = await response.json();
 
   if (!response.ok || data.error) {
-    const message =
+    const message = humanizeYoutubeApiError(
       data?.error?.message ||
-      `Erro na YouTube API (${response.status}). Verifique sua chave e restricoes.`;
+      `Erro na YouTube API (${response.status}). Verifique sua chave e restricoes.`
+    );
     throw new Error(message);
   }
 
   return data;
+}
+
+function humanizeYoutubeApiError(rawMessage) {
+  const cleaned = stripHtml(rawMessage)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) {
+    return "Erro na YouTube API.";
+  }
+
+  if (/quota/i.test(cleaned)) {
+    return "Quota da YouTube API excedida para hoje. Aguarde o reset diario ou use outra chave.";
+  }
+
+  if (/API key not valid/i.test(cleaned)) {
+    return "API key invalida. Confira a chave do YouTube Data API v3.";
+  }
+
+  if (/access not configured|permission|forbidden/i.test(cleaned)) {
+    return "Chave sem permissao para YouTube Data API v3 neste projeto.";
+  }
+
+  return cleaned;
+}
+
+function stripHtml(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.replace(/<[^>]*>/g, "");
 }
 
 function render() {
@@ -1098,6 +1180,8 @@ function normalizeStateCollections() {
     .map((channel) => ({
       ...channel,
       channelId: typeof channel.channelId === "string" ? channel.channelId.trim() : "",
+      uploadsPlaylistId:
+        typeof channel.uploadsPlaylistId === "string" ? channel.uploadsPlaylistId.trim() : "",
       category: sanitizeCategory(channel.category)
     }));
   state.channels = dedupeByKey(state.channels, "channelId");
