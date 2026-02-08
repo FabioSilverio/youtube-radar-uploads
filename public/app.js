@@ -1,6 +1,11 @@
 const STORAGE_KEY = "yt-radar-state-v2";
 const CLOUD_FILE_NAME = "youtube-radar-sync.json";
 const CLOUD_PULL_INTERVAL_MS = 45000;
+const CHANNEL_CATEGORIES = [
+  { id: "news", label: "News" },
+  { id: "entertainment", label: "Entretenimento" },
+  { id: "interviews", label: "Entrevistas" }
+];
 
 const state = {
   apiKey: "",
@@ -20,15 +25,18 @@ const state = {
 
 const refs = {
   tabFeed: document.querySelector("#tab-feed"),
+  tabChannels: document.querySelector("#tab-channels"),
   tabWatchLater: document.querySelector("#tab-watch-later"),
   tabSeen: document.querySelector("#tab-seen"),
   feedSection: document.querySelector("#feed-section"),
+  channelsSection: document.querySelector("#channels-section"),
   watchLaterSection: document.querySelector("#watch-later-section"),
   seenSection: document.querySelector("#seen-section"),
   apiKeyInput: document.querySelector("#api-key"),
   saveApiKeyBtn: document.querySelector("#save-api-key"),
   addChannelForm: document.querySelector("#add-channel-form"),
   channelUrlInput: document.querySelector("#channel-url"),
+  channelCategoryInput: document.querySelector("#channel-category"),
   refreshFeedBtn: document.querySelector("#refresh-feed"),
   cloudTokenInput: document.querySelector("#cloud-token"),
   cloudGistIdInput: document.querySelector("#cloud-gist-id"),
@@ -84,6 +92,7 @@ function init() {
 
 function bindEvents() {
   refs.tabFeed.addEventListener("click", () => showSection("feed"));
+  refs.tabChannels.addEventListener("click", () => showSection("channels"));
   refs.tabWatchLater.addEventListener("click", () => showSection("watchLater"));
   refs.tabSeen.addEventListener("click", () => showSection("seen"));
 
@@ -114,13 +123,15 @@ function bindEvents() {
     }
 
     const url = refs.channelUrlInput.value.trim();
+    const category = refs.channelCategoryInput.value;
     if (!url) return;
 
-    await addChannel(url);
+    await addChannel(url, category);
   });
 
   refs.refreshFeedBtn.addEventListener("click", refreshFeed);
-  refs.channelsList.addEventListener("click", handleRemoveChannelClick);
+  refs.channelsList.addEventListener("click", handleChannelsListClick);
+  refs.channelsList.addEventListener("change", handleChannelsListChange);
   refs.connectCloudSyncBtn.addEventListener("click", connectCloudSync);
   refs.pullCloudSyncBtn.addEventListener("click", () => syncFromCloud({ silent: false }));
   refs.generateSyncCodeBtn.addEventListener("click", () => {
@@ -164,17 +175,20 @@ function bindEvents() {
 
 function showSection(name) {
   const feedActive = name === "feed";
+  const channelsActive = name === "channels";
   const watchLaterActive = name === "watchLater";
   const seenActive = name === "seen";
   refs.tabFeed.classList.toggle("active", feedActive);
+  refs.tabChannels.classList.toggle("active", channelsActive);
   refs.tabWatchLater.classList.toggle("active", watchLaterActive);
   refs.tabSeen.classList.toggle("active", seenActive);
   refs.feedSection.classList.toggle("hidden", !feedActive);
+  refs.channelsSection.classList.toggle("hidden", !channelsActive);
   refs.watchLaterSection.classList.toggle("hidden", !watchLaterActive);
   refs.seenSection.classList.toggle("hidden", !seenActive);
 }
 
-async function addChannel(url) {
+async function addChannel(url, category) {
   setStatus("Resolvendo canal...");
 
   try {
@@ -186,10 +200,14 @@ async function addChannel(url) {
       return;
     }
 
-    state.channels.push(channel);
+    state.channels.push({
+      ...channel,
+      category: sanitizeCategory(category)
+    });
     refs.channelUrlInput.value = "";
+    refs.channelCategoryInput.value = sanitizeCategory(category);
     persist();
-    renderChannels();
+    renderChannelsManager();
     setStatus(`Canal adicionado: ${channel.channelTitle}`);
 
     await refreshFeed();
@@ -302,7 +320,8 @@ async function fetchLatestVideos(channel) {
       publishedAt: snippet.publishedAt || null,
       duration: null,
       channelId: channel.channelId,
-      channelTitle: channel.channelTitle || snippet.channelTitle || "Canal"
+      channelTitle: channel.channelTitle || snippet.channelTitle || "Canal",
+      channelCategory: sanitizeCategory(channel.category)
     });
   }
 
@@ -467,27 +486,35 @@ async function callYouTube(endpoint, params) {
 }
 
 function render() {
-  renderChannels();
+  renderChannelsManager();
   renderFeed();
   renderWatchLater();
   renderSeen();
 }
 
-function renderChannels() {
+function renderChannelsManager() {
   refs.channelsList.innerHTML = "";
 
+  if (state.channels.length === 0) {
+    refs.channelsList.innerHTML = "<p class=\"empty\">Nenhum canal cadastrado ainda.</p>";
+    return;
+  }
+
   for (const channel of state.channels) {
-    const pill = document.createElement("div");
-    pill.className = "channel-pill";
-    pill.innerHTML = `
-      <span>${escapeHtml(channel.channelTitle)}</span>
+    const row = document.createElement("div");
+    row.className = "channel-row";
+    row.innerHTML = `
+      <span class="channel-row-title">${escapeHtml(channel.channelTitle)}</span>
+      <select data-channel-category="${channel.channelId}">
+        ${CHANNEL_CATEGORIES.map((item) => `<option value="${item.id}" ${item.id === sanitizeCategory(channel.category) ? "selected" : ""}>${item.label}</option>`).join("")}
+      </select>
       <button type="button" data-remove-channel="${channel.channelId}">Remover</button>
     `;
-    refs.channelsList.appendChild(pill);
+    refs.channelsList.appendChild(row);
   }
 }
 
-function handleRemoveChannelClick(event) {
+function handleChannelsListClick(event) {
   const channelId = event.target.getAttribute("data-remove-channel");
   if (!channelId) return;
 
@@ -507,6 +534,35 @@ function handleRemoveChannelClick(event) {
   setStatus("Canal removido.");
 }
 
+function handleChannelsListChange(event) {
+  const channelId = event.target.getAttribute("data-channel-category");
+  if (!channelId) return;
+
+  const channel = state.channels.find((item) => item.channelId === channelId);
+  if (!channel) return;
+
+  channel.category = sanitizeCategory(event.target.value);
+  for (const video of state.feedVideos) {
+    if (video.channelId === channelId) {
+      video.channelCategory = channel.category;
+    }
+  }
+  for (const video of state.watchLater) {
+    if (video.channelId === channelId) {
+      video.channelCategory = channel.category;
+    }
+  }
+  for (const video of state.seenVideos) {
+    if (video.channelId === channelId) {
+      video.channelCategory = channel.category;
+    }
+  }
+
+  persist();
+  render();
+  setStatus(`Categoria atualizada para ${getCategoryLabel(channel.category)}.`);
+}
+
 function renderFeed() {
   refs.feedList.innerHTML = "";
 
@@ -515,9 +571,30 @@ function renderFeed() {
     return;
   }
 
-  for (const video of state.feedVideos) {
-    const card = buildVideoCard(video, { mode: "feed" });
-    refs.feedList.appendChild(card);
+  for (const category of CHANNEL_CATEGORIES) {
+    const videos = state.feedVideos.filter(
+      (video) => sanitizeCategory(video.channelCategory) === category.id
+    );
+
+    const group = document.createElement("section");
+    group.className = "feed-group";
+    group.innerHTML = `<h3>${category.label}</h3>`;
+
+    if (videos.length === 0) {
+      group.innerHTML += `<p class="empty">Sem novos videos nessa categoria.</p>`;
+      refs.feedList.appendChild(group);
+      continue;
+    }
+
+    const list = document.createElement("div");
+    list.className = "video-list";
+    for (const video of videos) {
+      const card = buildVideoCard(video, { mode: "feed" });
+      list.appendChild(card);
+    }
+
+    group.appendChild(list);
+    refs.feedList.appendChild(group);
   }
 }
 
@@ -730,15 +807,52 @@ function formatIsoDuration(isoDuration) {
   return `${Math.max(0, minutes)}:${String(seconds).padStart(2, "0")}`;
 }
 
+function sanitizeCategory(value) {
+  const valid = CHANNEL_CATEGORIES.some((item) => item.id === value);
+  if (valid) {
+    return value;
+  }
+  return "news";
+}
+
+function getCategoryLabel(value) {
+  const id = sanitizeCategory(value);
+  const found = CHANNEL_CATEGORIES.find((item) => item.id === id);
+  return found ? found.label : "News";
+}
+
+function getChannelCategoryById(channelId) {
+  const channel = state.channels.find((item) => item.channelId === channelId);
+  if (!channel) {
+    return "news";
+  }
+  return sanitizeCategory(channel.category);
+}
+
 function setStatus(message) {
   refs.statusMessage.textContent = message;
 }
 
 function normalizeStateCollections() {
   state.channels = dedupeByKey(state.channels, "channelId");
+  state.channels = state.channels.map((channel) => ({
+    ...channel,
+    category: sanitizeCategory(channel.category)
+  }));
+
   state.feedVideos = dedupeByKey(state.feedVideos, "id");
   state.watchLater = dedupeByKey(state.watchLater, "id");
   state.seenVideos = dedupeByKey(state.seenVideos, "id");
+
+  for (const collection of [state.feedVideos, state.watchLater, state.seenVideos]) {
+    for (const video of collection) {
+      if (!video.channelCategory) {
+        video.channelCategory = getChannelCategoryById(video.channelId);
+      } else {
+        video.channelCategory = sanitizeCategory(video.channelCategory);
+      }
+    }
+  }
 
   for (const video of [...state.feedVideos, ...state.watchLater]) {
     if (state.watchedMap[video.id]) {

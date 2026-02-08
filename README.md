@@ -1,8 +1,9 @@
 # Radar de Uploads YouTube
 
-App web com 3 secoes:
+App web com 4 secoes:
 
-- `FEED`: junta os ultimos videos dos canais que voce acompanha.
+- `FEED`: junta os ultimos videos por categoria (`News`, `Entretenimento`, `Entrevistas`).
+- `CANAIS`: area para adicionar/remover canais e definir categoria de cada canal.
 - `ASSISTIR DEPOIS`: guarda os videos que voce salvou.
 - `JA VISTOS`: recebe os videos marcados como assistidos (saem do FEED).
 
@@ -19,7 +20,8 @@ Tambem permite:
 1. Abra o site.
 2. Cole sua **YouTube API key** e clique em `Salvar chave`.
 3. Adicione URLs dos canais que quer acompanhar.
-4. Use `Atualizar feed` para buscar uploads recentes.
+4. Escolha a categoria do canal ao cadastrar (ou edite depois na aba `CANAIS`).
+5. Use `Atualizar feed` para buscar uploads recentes.
 5. Para nuvem automatica, informe um token GitHub com escopo `gist` e clique em `Conectar nuvem`.
 
 ## Sync na nuvem (GitHub Gist)

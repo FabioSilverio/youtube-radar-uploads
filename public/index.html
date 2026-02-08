@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260207-5" />
+    <link rel="stylesheet" href="./styles.css?v=20260207-6" />
   </head>
   <body>
     <header class="site-header">
@@ -21,13 +21,29 @@
       </div>
       <div class="tabs">
         <button id="tab-feed" class="tab-button active" type="button">FEED</button>
+        <button id="tab-channels" class="tab-button" type="button">CANAIS</button>
         <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
         <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
       </div>
     </header>
 
     <main class="container">
+      <p id="status-message" class="status-message"></p>
+
       <section id="feed-section" class="panel">
+        <div class="feed-intro">
+          <h2>Novos videos por categoria</h2>
+          <p>Seus canais sao organizados por tag para facilitar a leitura.</p>
+        </div>
+
+        <div class="actions">
+          <button id="refresh-feed" type="button">Atualizar feed</button>
+        </div>
+
+        <div id="feed-list" class="feed-groups"></div>
+      </section>
+
+      <section id="channels-section" class="panel hidden">
         <div class="api-key-box">
           <label for="api-key">YouTube API Key</label>
           <div class="form-row">
@@ -48,17 +64,19 @@
               placeholder="https://www.youtube.com/@canal"
               required
             />
+            <select id="channel-category" required>
+              <option value="news">News</option>
+              <option value="entertainment">Entretenimento</option>
+              <option value="interviews">Entrevistas</option>
+            </select>
             <button type="submit">Adicionar canal</button>
           </div>
         </form>
 
-        <div class="actions">
-          <button id="refresh-feed" type="button">Atualizar feed</button>
+        <div class="channels-manager">
+          <h2>Canais cadastrados</h2>
+          <div id="channels-list" class="channels-manage-list"></div>
         </div>
-
-        <p id="status-message" class="status-message"></p>
-        <div id="channels-list" class="channels-list"></div>
-        <div id="feed-list" class="video-list"></div>
       </section>
 
       <section id="watch-later-section" class="panel hidden">
@@ -132,6 +150,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260207-5" defer></script>
+    <script src="./app.js?v=20260207-6" defer></script>
   </body>
 </html>

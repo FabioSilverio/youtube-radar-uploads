@@ -127,6 +127,16 @@ body {
   gap: 0.85rem;
 }
 
+.feed-intro h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.feed-intro p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+
 .api-key-box,
 .add-channel-form,
 .sync-box {
@@ -159,6 +169,20 @@ input {
 }
 
 input:focus {
+  outline: 2px solid #ffc08f;
+  outline-offset: 1px;
+}
+
+select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.66rem;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+select:focus {
   outline: 2px solid #ffc08f;
   outline-offset: 1px;
 }
@@ -213,6 +237,37 @@ button:hover {
   gap: 0.45rem;
 }
 
+.channels-manager h2 {
+  margin: 0.1rem 0;
+  font-size: 1.1rem;
+}
+
+.channels-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff6eb;
+  padding: 0.5rem;
+}
+
+.channel-row-title {
+  flex: 1;
+  min-width: 180px;
+  font-weight: 700;
+}
+
+.channel-row select {
+  min-width: 180px;
+}
+
 .channel-pill {
   display: inline-flex;
   align-items: center;
@@ -233,6 +288,24 @@ button:hover {
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(0, 1fr);
+}
+
+.feed-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.feed-group {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.75rem;
+  background: var(--panel);
+}
+
+.feed-group h3 {
+  margin: 0 0 0.65rem;
+  font-size: 1.05rem;
 }
 
 .video-card {
@@ -353,6 +426,15 @@ button:hover {
 
   .form-row {
     flex-direction: column;
+  }
+
+  .channel-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .channel-row select {
+    min-width: 0;
   }
 
   .video-card {
