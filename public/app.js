@@ -1140,10 +1140,11 @@ function buildVideoCard(video, config) {
   thumb.src = video.thumbnail || "";
   thumb.alt = `Thumbnail: ${video.title}`;
   link.href = video.url;
-  link.textContent = video.title;
+  link.textContent = video.title || "Video sem titulo";
   meta.textContent = `${video.channelTitle} - ${formatDate(video.publishedAt)}`;
   durationText.textContent = `Duracao: ${durationLabel}`;
-  durationBadge.textContent = durationLabel;
+  durationText.classList.remove("hidden");
+  durationBadge.textContent = durationLabel === "Indisponivel" ? "--:--" : durationLabel;
 
   if (config.mode === "seen") {
     watchedCheckbox.checked = true;
