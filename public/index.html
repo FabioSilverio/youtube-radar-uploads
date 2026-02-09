@@ -12,7 +12,7 @@
     />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260209-1" />
     <link rel="apple-touch-icon" href="./favicon.svg?v=20260209-1" />
-    <link rel="stylesheet" href="./styles.css?v=20260208-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260209-2" />
   </head>
   <body>
     <header class="site-header">
@@ -46,6 +46,39 @@
 
         <div class="actions">
           <button id="refresh-feed" type="button">Atualizar feed</button>
+        </div>
+
+        <div class="feed-toolbar">
+          <div id="feed-filter-group" class="feed-filter-group" aria-label="Filtros do feed">
+            <button type="button" class="feed-filter-btn" data-category-filter="news" aria-pressed="true">
+              News
+            </button>
+            <button
+              type="button"
+              class="feed-filter-btn"
+              data-category-filter="entertainment"
+              aria-pressed="true"
+            >
+              Entretenimento
+            </button>
+            <button
+              type="button"
+              class="feed-filter-btn"
+              data-category-filter="interviews"
+              aria-pressed="true"
+            >
+              Entrevistas
+            </button>
+            <button id="feed-show-all" type="button" class="feed-secondary-btn">Mostrar todas</button>
+          </div>
+          <div class="feed-layout-group" aria-label="Layout do feed">
+            <button id="feed-layout-stacked" type="button" class="feed-layout-btn" aria-pressed="true">
+              Empilhado
+            </button>
+            <button id="feed-layout-columns" type="button" class="feed-layout-btn" aria-pressed="false">
+              Lado a lado
+            </button>
+          </div>
         </div>
 
         <div id="feed-list" class="feed-groups"></div>
@@ -175,6 +208,6 @@
       </article>
     </template>
 
-    <script src="./app.js?v=20260209-1" defer></script>
+    <script src="./app.js?v=20260209-2" defer></script>
   </body>
 </html>

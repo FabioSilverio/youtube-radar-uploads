@@ -11,6 +11,21 @@ const CHANNEL_CATEGORIES = [
   { id: "interviews", label: "Entrevistas" }
 ];
 
+function createDefaultCategoryVisibility() {
+  return {
+    news: true,
+    entertainment: true,
+    interviews: true
+  };
+}
+
+function createDefaultFeedView() {
+  return {
+    layout: "stacked",
+    visibleCategories: createDefaultCategoryVisibility()
+  };
+}
+
 const state = {
   apiKey: "",
   channels: [],
@@ -22,6 +37,7 @@ const state = {
   lastModifiedAt: 0,
   feedLastFetchedAt: 0,
   quotaBackoffUntil: 0,
+  feedView: createDefaultFeedView(),
   cloudSync: {
     enabled: false,
     token: "",
@@ -50,6 +66,10 @@ const refs = {
   addArticleForm: document.querySelector("#add-article-form"),
   articleUrlInput: document.querySelector("#article-url"),
   refreshFeedBtn: document.querySelector("#refresh-feed"),
+  feedFilterGroup: document.querySelector("#feed-filter-group"),
+  feedShowAllBtn: document.querySelector("#feed-show-all"),
+  feedLayoutStackedBtn: document.querySelector("#feed-layout-stacked"),
+  feedLayoutColumnsBtn: document.querySelector("#feed-layout-columns"),
   cloudTokenInput: document.querySelector("#cloud-token"),
   cloudGistIdInput: document.querySelector("#cloud-gist-id"),
   connectCloudSyncBtn: document.querySelector("#connect-cloud-sync"),
@@ -157,6 +177,18 @@ function bindEvents() {
   });
 
   refs.refreshFeedBtn.addEventListener("click", () => refreshFeed({ force: true, source: "manual" }));
+  if (refs.feedFilterGroup) {
+    refs.feedFilterGroup.addEventListener("click", handleFeedFilterClick);
+  }
+  if (refs.feedShowAllBtn) {
+    refs.feedShowAllBtn.addEventListener("click", showAllFeedCategories);
+  }
+  if (refs.feedLayoutStackedBtn) {
+    refs.feedLayoutStackedBtn.addEventListener("click", () => setFeedLayout("stacked"));
+  }
+  if (refs.feedLayoutColumnsBtn) {
+    refs.feedLayoutColumnsBtn.addEventListener("click", () => setFeedLayout("columns"));
+  }
   refs.channelsList.addEventListener("click", handleChannelsListClick);
   refs.channelsList.addEventListener("change", handleChannelsListChange);
   refs.articleList.addEventListener("click", handleArticleListClick);
@@ -822,15 +854,84 @@ function handleChannelsListChange(event) {
   setStatus(`Categoria atualizada para ${getCategoryLabel(channel.category)}.`);
 }
 
+function handleFeedFilterClick(event) {
+  const target = event.target.closest("[data-category-filter]");
+  if (!target) return;
+
+  const categoryId = target.getAttribute("data-category-filter");
+  toggleFeedCategory(categoryId);
+}
+
+function toggleFeedCategory(categoryId) {
+  if (!CHANNEL_CATEGORIES.some((item) => item.id === categoryId)) {
+    return;
+  }
+
+  state.feedView.visibleCategories[categoryId] = !state.feedView.visibleCategories[categoryId];
+  persist();
+  renderFeed();
+}
+
+function showAllFeedCategories() {
+  state.feedView.visibleCategories = createDefaultCategoryVisibility();
+  persist();
+  renderFeed();
+}
+
+function setFeedLayout(layout) {
+  if (!["stacked", "columns"].includes(layout)) {
+    return;
+  }
+
+  state.feedView.layout = layout;
+  persist();
+  renderFeed();
+}
+
+function renderFeedToolbar() {
+  if (refs.feedFilterGroup) {
+    for (const category of CHANNEL_CATEGORIES) {
+      const btn = refs.feedFilterGroup.querySelector(`[data-category-filter="${category.id}"]`);
+      if (!btn) continue;
+      const active = Boolean(state.feedView.visibleCategories[category.id]);
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
+  if (refs.feedLayoutStackedBtn) {
+    const active = state.feedView.layout === "stacked";
+    refs.feedLayoutStackedBtn.classList.toggle("is-active", active);
+    refs.feedLayoutStackedBtn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  if (refs.feedLayoutColumnsBtn) {
+    const active = state.feedView.layout === "columns";
+    refs.feedLayoutColumnsBtn.classList.toggle("is-active", active);
+    refs.feedLayoutColumnsBtn.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
 function renderFeed() {
   refs.feedList.innerHTML = "";
+  refs.feedList.classList.toggle("feed-groups-columns", state.feedView.layout === "columns");
+  renderFeedToolbar();
 
   if (state.feedVideos.length === 0) {
     refs.feedList.innerHTML = "<p class=\"empty\">Sem videos para mostrar no feed.</p>";
     return;
   }
 
-  for (const category of CHANNEL_CATEGORIES) {
+  const visibleCategories = CHANNEL_CATEGORIES.filter(
+    (category) => state.feedView.visibleCategories[category.id]
+  );
+
+  if (visibleCategories.length === 0) {
+    refs.feedList.innerHTML = "<p class=\"empty\">Nenhuma secao selecionada. Ative os filtros acima.</p>";
+    return;
+  }
+
+  for (const category of visibleCategories) {
     const videos = state.feedVideos.filter(
       (video) => sanitizeCategory(video.channelCategory) === category.id
     );
@@ -1225,6 +1326,30 @@ function getChannelCategoryById(channelId) {
   return sanitizeCategory(channel.category);
 }
 
+function normalizeFeedViewState(feedView) {
+  const defaults = createDefaultFeedView();
+  const input = feedView && typeof feedView === "object" ? feedView : {};
+  const visibleInput =
+    input.visibleCategories && typeof input.visibleCategories === "object"
+      ? input.visibleCategories
+      : {};
+
+  const visibleCategories = {};
+  for (const category of CHANNEL_CATEGORIES) {
+    visibleCategories[category.id] =
+      typeof visibleInput[category.id] === "boolean"
+        ? visibleInput[category.id]
+        : defaults.visibleCategories[category.id];
+  }
+
+  const layout = input.layout === "columns" ? "columns" : "stacked";
+
+  return {
+    layout,
+    visibleCategories
+  };
+}
+
 function normalizeHttpUrl(value) {
   let candidate = value.trim();
   if (!/^https?:\/\//i.test(candidate)) {
@@ -1276,6 +1401,8 @@ function setStatus(message) {
 }
 
 function normalizeStateCollections() {
+  state.feedView = normalizeFeedViewState(state.feedView);
+
   state.channels = state.channels
     .filter((channel) => channel && typeof channel === "object")
     .map((channel) => ({
@@ -1598,7 +1725,8 @@ function buildCloudDocument() {
         articles: state.articles,
         watchLater: state.watchLater,
         seenVideos: state.seenVideos,
-        watchedMap: state.watchedMap
+        watchedMap: state.watchedMap,
+        feedView: state.feedView
       }
     },
     null,
@@ -1660,7 +1788,8 @@ function encodeSyncState() {
     articles: state.articles,
     watchLater: state.watchLater,
     seenVideos: state.seenVideos,
-    watchedMap: state.watchedMap
+    watchedMap: state.watchedMap,
+    feedView: state.feedView
   };
 
   return base64Encode(JSON.stringify(payload));
@@ -1693,6 +1822,7 @@ function applyImportedState(payload, options = {}) {
   state.watchLater = Array.isArray(payload.watchLater) ? payload.watchLater : [];
   state.seenVideos = Array.isArray(payload.seenVideos) ? payload.seenVideos : [];
   state.watchedMap = payload.watchedMap && typeof payload.watchedMap === "object" ? payload.watchedMap : {};
+  state.feedView = normalizeFeedViewState(payload.feedView);
   state.feedVideos = [];
   state.feedLastFetchedAt = 0;
   state.quotaBackoffUntil = 0;
@@ -1761,6 +1891,7 @@ function persist(options = {}) {
       watchLater: state.watchLater,
       seenVideos: state.seenVideos,
       watchedMap: state.watchedMap,
+      feedView: state.feedView,
       lastModifiedAt: state.lastModifiedAt,
       feedLastFetchedAt: state.feedLastFetchedAt,
       quotaBackoffUntil: state.quotaBackoffUntil,
@@ -1806,6 +1937,10 @@ function hydrateState() {
 
     if (parsed.watchedMap && typeof parsed.watchedMap === "object") {
       state.watchedMap = parsed.watchedMap;
+    }
+
+    if (parsed.feedView && typeof parsed.feedView === "object") {
+      state.feedView = normalizeFeedViewState(parsed.feedView);
     }
 
     if (typeof parsed.lastModifiedAt === "number") {
