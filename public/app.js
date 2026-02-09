@@ -2,6 +2,8 @@ const STORAGE_KEY = "yt-radar-state-v2";
 const THEME_STORAGE_KEY = "yt-radar-theme";
 const CLOUD_FILE_NAME = "youtube-radar-sync.json";
 const CLOUD_PULL_INTERVAL_MS = 45000;
+const AUTO_REFRESH_INTERVAL_MS = 20 * 60 * 1000;
+const QUOTA_BACKOFF_MS = 60 * 60 * 1000;
 const CHANNEL_ID_REGEX = /^UC[\w-]{20,}$/;
 const CHANNEL_CATEGORIES = [
   { id: "news", label: "News" },
@@ -18,6 +20,8 @@ const state = {
   seenVideos: [],
   watchedMap: {},
   lastModifiedAt: 0,
+  feedLastFetchedAt: 0,
+  quotaBackoffUntil: 0,
   cloudSync: {
     enabled: false,
     token: "",
@@ -96,7 +100,7 @@ function init() {
   }
 
   if (state.channels.length > 0) {
-    refreshFeed();
+    refreshFeed({ force: false, source: "init" });
   } else {
     setStatus("Adicione canais para montar seu feed.");
   }
@@ -126,7 +130,7 @@ function bindEvents() {
 
     setStatus("API key salva.");
     if (state.channels.length > 0) {
-      await refreshFeed();
+      await refreshFeed({ force: true, source: "manual" });
     }
   });
 
@@ -152,7 +156,7 @@ function bindEvents() {
     await addArticle(url);
   });
 
-  refs.refreshFeedBtn.addEventListener("click", refreshFeed);
+  refs.refreshFeedBtn.addEventListener("click", () => refreshFeed({ force: true, source: "manual" }));
   refs.channelsList.addEventListener("click", handleChannelsListClick);
   refs.channelsList.addEventListener("change", handleChannelsListChange);
   refs.articleList.addEventListener("click", handleArticleListClick);
@@ -189,7 +193,7 @@ function bindEvents() {
       setStatus("Sincronizacao importada com sucesso.");
 
       if (state.channels.length > 0 && state.apiKey) {
-        await refreshFeed();
+        await refreshFeed({ force: false, source: "import" });
       }
     } catch (error) {
       setStatus(error.message || "Codigo de sincronizacao invalido.");
@@ -268,13 +272,15 @@ async function addChannel(url, category) {
     renderChannelsManager();
     setStatus(`Canal adicionado: ${channel.channelTitle}`);
 
-    await refreshFeed();
+    await refreshFeed({ force: true, source: "manual" });
   } catch (error) {
     setStatus(error.message || "Nao foi possivel adicionar esse canal.");
   }
 }
 
-async function refreshFeed() {
+async function refreshFeed(options = {}) {
+  const { force = false } = options;
+
   if (!state.apiKey) {
     setStatus("Salve sua API key para atualizar o feed.");
     return;
@@ -285,6 +291,24 @@ async function refreshFeed() {
     persist();
     renderFeed();
     setStatus("Adicione canais para montar seu feed.");
+    return;
+  }
+
+  const now = Date.now();
+  if (!force && state.quotaBackoffUntil && now < state.quotaBackoffUntil) {
+    const minutesLeft = Math.max(1, Math.ceil((state.quotaBackoffUntil - now) / 60000));
+    setStatus(`Economia de quota ativa: tente atualizar novamente em cerca de ${minutesLeft} min.`);
+    return;
+  }
+
+  if (
+    !force &&
+    state.feedLastFetchedAt &&
+    now - state.feedLastFetchedAt < AUTO_REFRESH_INTERVAL_MS &&
+    state.feedVideos.length > 0
+  ) {
+    const minutesLeft = Math.max(1, Math.ceil((AUTO_REFRESH_INTERVAL_MS - (now - state.feedLastFetchedAt)) / 60000));
+    setStatus(`Feed atualizado recentemente. Proxima atualizacao automatica em ~${minutesLeft} min.`);
     return;
   }
 
@@ -331,6 +355,8 @@ async function refreshFeed() {
 
     const failedChannels = failures.map((item) => item.channel).join(", ");
     if (failures.every((item) => item.isQuota)) {
+      state.quotaBackoffUntil = Math.max(state.quotaBackoffUntil || 0, Date.now() + QUOTA_BACKOFF_MS);
+      persist({ skipCloudPush: true, keepTimestamp: true });
       setStatus(
         `Feed operacional, mas a YouTube API atingiu o limite diario de quota. Canais sem atualizacao por isso: ${failedChannels}`
       );
@@ -349,7 +375,17 @@ async function refreshFeed() {
     }
   }
 
-  const sortedVideos = Array.from(unique.values()).sort((a, b) => {
+  const allVideos = Array.from(unique.values());
+  try {
+    const durationMap = await fetchVideoDurations(allVideos.map((video) => video.id));
+    for (const video of allVideos) {
+      video.duration = durationMap.get(video.id) || null;
+    }
+  } catch (error) {
+    console.warn("Nao consegui carregar duracoes nesta atualizacao", error);
+  }
+
+  const sortedVideos = allVideos.sort((a, b) => {
     const da = new Date(a.publishedAt || 0).getTime();
     const db = new Date(b.publishedAt || 0).getTime();
     return db - da;
@@ -366,6 +402,8 @@ async function refreshFeed() {
 
   state.feedVideos = unseenVideos;
   state.watchLater = state.watchLater.filter((video) => !state.watchedMap[video.id]);
+  state.feedLastFetchedAt = Date.now();
+  state.quotaBackoffUntil = 0;
 
   if (repairedChannels) {
     normalizeStateCollections();
@@ -376,6 +414,8 @@ async function refreshFeed() {
   if (failures.length > 0) {
     const failedChannels = failures.map((item) => item.channel).join(", ");
     if (failures.some((item) => item.isQuota)) {
+      state.quotaBackoffUntil = Math.max(state.quotaBackoffUntil || 0, Date.now() + QUOTA_BACKOFF_MS);
+      persist({ skipCloudPush: true, keepTimestamp: true });
       setStatus(
         `Feed atualizado parcialmente. Alguns canais nao atualizaram por limite diario de quota da YouTube API: ${failedChannels}`
       );
@@ -391,19 +431,18 @@ async function refreshFeed() {
 }
 
 async function fetchLatestVideos(channel) {
-  const data = await callYouTube("search", {
+  const uploadsPlaylistId = await ensureUploadsPlaylistId(channel);
+  const data = await callYouTube("playlistItems", {
     part: "snippet",
-    channelId: channel.channelId,
-    maxResults: "12",
-    order: "date",
-    type: "video"
+    playlistId: uploadsPlaylistId,
+    maxResults: "12"
   });
 
   const items = Array.isArray(data.items) ? data.items : [];
   const videos = [];
 
   for (const item of items) {
-    const videoId = item?.id?.videoId;
+    const videoId = item?.snippet?.resourceId?.videoId;
     const snippet = item?.snippet;
 
     if (!videoId || !snippet) continue;
@@ -425,12 +464,33 @@ async function fetchLatestVideos(channel) {
     });
   }
 
-  const durationMap = await fetchVideoDurations(videos.map((video) => video.id));
-  for (const video of videos) {
-    video.duration = durationMap.get(video.id) || null;
+  return videos;
+}
+
+async function ensureUploadsPlaylistId(channel) {
+  if (typeof channel.uploadsPlaylistId === "string" && channel.uploadsPlaylistId.trim()) {
+    return channel.uploadsPlaylistId.trim();
   }
 
-  return videos;
+  const data = await callYouTube("channels", {
+    part: "snippet,contentDetails",
+    id: channel.channelId,
+    maxResults: "1"
+  });
+
+  const item = data?.items?.[0];
+  const uploadsPlaylistId = item?.contentDetails?.relatedPlaylists?.uploads;
+
+  if (!uploadsPlaylistId) {
+    throw new Error("Nao encontrei playlist de uploads para esse canal.");
+  }
+
+  channel.uploadsPlaylistId = uploadsPlaylistId;
+  if (item?.snippet?.title) {
+    channel.channelTitle = item.snippet.title;
+  }
+
+  return uploadsPlaylistId;
 }
 
 async function ensureChannelReadyForFeed(channel) {
@@ -450,6 +510,7 @@ async function ensureChannelReadyForFeed(channel) {
     channelTitle: resolved.channelTitle || channel.channelTitle || resolved.channelId,
     channelUrl: resolved.channelUrl || channel.channelUrl || `https://www.youtube.com/channel/${resolved.channelId}`,
     sourceUrl: channel.sourceUrl || resolved.sourceUrl || lookupInput,
+    uploadsPlaylistId: resolved.uploadsPlaylistId || channel.uploadsPlaylistId || "",
     category: sanitizeCategory(channel.category)
   };
 
@@ -467,16 +528,19 @@ async function fetchVideoDurations(videoIds) {
     return new Map();
   }
 
-  const data = await callYouTube("videos", {
-    part: "contentDetails",
-    id: ids.join(","),
-    maxResults: "50"
-  });
-
   const map = new Map();
-  for (const item of data.items || []) {
-    if (!item?.id) continue;
-    map.set(item.id, item?.contentDetails?.duration || null);
+  for (let index = 0; index < ids.length; index += 50) {
+    const chunk = ids.slice(index, index + 50);
+    const data = await callYouTube("videos", {
+      part: "contentDetails",
+      id: chunk.join(","),
+      maxResults: "50"
+    });
+
+    for (const item of data.items || []) {
+      if (!item?.id) continue;
+      map.set(item.id, item?.contentDetails?.duration || null);
+    }
   }
 
   return map;
@@ -608,12 +672,7 @@ async function resolveChannelBySearch(query, sourceUrl) {
     throw new Error("Nao foi possivel resolver esse canal.");
   }
 
-  return {
-    channelId,
-    channelTitle: item.snippet?.channelTitle || item.snippet?.title || query,
-    channelUrl: `https://www.youtube.com/channel/${channelId}`,
-    sourceUrl
-  };
+  return resolveChannelById(channelId, sourceUrl);
 }
 
 async function callYouTube(endpoint, params) {
@@ -636,6 +695,9 @@ async function callYouTube(endpoint, params) {
     );
     const error = new Error(message);
     error.isQuota = isQuotaReason(reasonCode) || isQuotaReason(message);
+    if (error.isQuota) {
+      state.quotaBackoffUntil = Math.max(state.quotaBackoffUntil || 0, Date.now() + QUOTA_BACKOFF_MS);
+    }
     throw error;
   }
 
@@ -1415,7 +1477,7 @@ async function syncFromCloud(options = {}) {
       render();
 
       if (state.apiKey && state.channels.length > 0) {
-        await refreshFeed();
+        await refreshFeed({ force: false, source: "cloud" });
       }
 
       if (!silent) {
@@ -1632,6 +1694,8 @@ function applyImportedState(payload, options = {}) {
   state.seenVideos = Array.isArray(payload.seenVideos) ? payload.seenVideos : [];
   state.watchedMap = payload.watchedMap && typeof payload.watchedMap === "object" ? payload.watchedMap : {};
   state.feedVideos = [];
+  state.feedLastFetchedAt = 0;
+  state.quotaBackoffUntil = 0;
 
   if (!keepTimestamp) {
     state.lastModifiedAt = Date.now();
@@ -1698,6 +1762,8 @@ function persist(options = {}) {
       seenVideos: state.seenVideos,
       watchedMap: state.watchedMap,
       lastModifiedAt: state.lastModifiedAt,
+      feedLastFetchedAt: state.feedLastFetchedAt,
+      quotaBackoffUntil: state.quotaBackoffUntil,
       cloudSync: state.cloudSync
     })
   );
@@ -1744,6 +1810,14 @@ function hydrateState() {
 
     if (typeof parsed.lastModifiedAt === "number") {
       state.lastModifiedAt = parsed.lastModifiedAt;
+    }
+
+    if (typeof parsed.feedLastFetchedAt === "number") {
+      state.feedLastFetchedAt = parsed.feedLastFetchedAt;
+    }
+
+    if (typeof parsed.quotaBackoffUntil === "number") {
+      state.quotaBackoffUntil = parsed.quotaBackoffUntil;
     }
 
     if (parsed.cloudSync && typeof parsed.cloudSync === "object") {
