@@ -52,6 +52,11 @@ const refs = {
   tabArticles: document.querySelector("#tab-articles"),
   tabWatchLater: document.querySelector("#tab-watch-later"),
   tabSeen: document.querySelector("#tab-seen"),
+  tabFeedMobile: document.querySelector("#tab-feed-mobile"),
+  tabChannelsMobile: document.querySelector("#tab-channels-mobile"),
+  tabArticlesMobile: document.querySelector("#tab-articles-mobile"),
+  tabWatchLaterMobile: document.querySelector("#tab-watch-later-mobile"),
+  tabSeenMobile: document.querySelector("#tab-seen-mobile"),
   themeToggleBtn: document.querySelector("#theme-toggle"),
   feedSection: document.querySelector("#feed-section"),
   channelsSection: document.querySelector("#channels-section"),
@@ -132,6 +137,11 @@ function bindEvents() {
   refs.tabArticles.addEventListener("click", () => showSection("articles"));
   refs.tabWatchLater.addEventListener("click", () => showSection("watchLater"));
   refs.tabSeen.addEventListener("click", () => showSection("seen"));
+  if (refs.tabFeedMobile) refs.tabFeedMobile.addEventListener("click", () => showSection("feed"));
+  if (refs.tabChannelsMobile) refs.tabChannelsMobile.addEventListener("click", () => showSection("channels"));
+  if (refs.tabArticlesMobile) refs.tabArticlesMobile.addEventListener("click", () => showSection("articles"));
+  if (refs.tabWatchLaterMobile) refs.tabWatchLaterMobile.addEventListener("click", () => showSection("watchLater"));
+  if (refs.tabSeenMobile) refs.tabSeenMobile.addEventListener("click", () => showSection("seen"));
   if (refs.themeToggleBtn) {
     refs.themeToggleBtn.addEventListener("click", toggleTheme);
   }
@@ -275,6 +285,11 @@ function showSection(name) {
   refs.tabArticles.classList.toggle("active", articlesActive);
   refs.tabWatchLater.classList.toggle("active", watchLaterActive);
   refs.tabSeen.classList.toggle("active", seenActive);
+  if (refs.tabFeedMobile) refs.tabFeedMobile.classList.toggle("active", feedActive);
+  if (refs.tabChannelsMobile) refs.tabChannelsMobile.classList.toggle("active", channelsActive);
+  if (refs.tabArticlesMobile) refs.tabArticlesMobile.classList.toggle("active", articlesActive);
+  if (refs.tabWatchLaterMobile) refs.tabWatchLaterMobile.classList.toggle("active", watchLaterActive);
+  if (refs.tabSeenMobile) refs.tabSeenMobile.classList.toggle("active", seenActive);
   refs.feedSection.classList.toggle("hidden", !feedActive);
   refs.channelsSection.classList.toggle("hidden", !channelsActive);
   refs.articlesSection.classList.toggle("hidden", !articlesActive);
