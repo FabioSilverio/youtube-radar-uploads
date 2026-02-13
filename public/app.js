@@ -7,7 +7,6 @@ const dom = {
   searchBtn: document.querySelector("#search-btn"),
   quickChips: document.querySelectorAll(".quick-chip"),
   openSearchList: document.querySelector("#open-search-list"),
-  openSearchLinks: document.querySelector("#open-search-links"),
   newsList: document.querySelector("#news-list"),
   wikiSummary: document.querySelector("#wiki-summary"),
   wikiRelated: document.querySelector("#wiki-related"),
@@ -141,8 +140,7 @@ function setStatus(message) {
 }
 
 function clearAllResults() {
-  setContainerLoading(dom.openSearchList, "Carregando resultados de busca...");
-  dom.openSearchLinks.innerHTML = "";
+  setContainerLoading(dom.openSearchList, "Carregando noticias dos provedores...");
 
   setContainerLoading(dom.newsList, "Carregando noticias...");
 
@@ -160,68 +158,64 @@ function setContainerLoading(container, message) {
 }
 
 async function fetchOpenSearch(term, signal) {
-  const params = new URLSearchParams({
-    q: term,
-    format: "json",
-    no_redirect: "1",
-    no_html: "1"
-  });
+  const encodedTerm = encodeURIComponent(term);
+  const googleUrl = `https://news.google.com/rss/search?q=${encodedTerm}%20when%3A7d&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
+  const bingUrl = `https://www.bing.com/news/search?q=${encodedTerm}&format=rss`;
 
-  const url = `https://api.duckduckgo.com/?${params.toString()}`;
-  const data = await fetchJson(url, signal);
+  const [googleResult, bingResult] = await Promise.allSettled([
+    fetchProviderRssNews("Google News", googleUrl, signal),
+    fetchProviderRssNews("Bing News", bingUrl, signal)
+  ]);
 
-  const results = [];
+  const googleItems = readSettled(googleResult);
+  const bingItems = readSettled(bingResult);
+  const combined = sortByDateDesc([...googleItems, ...bingItems]);
+  const deduped = uniqueBy(combined, (item) => normalizeNewsIdentity(item)).slice(0, 12);
 
-  if (data.AbstractURL && data.AbstractText) {
-    results.push({
-      title: data.Heading || "Resultado principal",
-      description: data.AbstractText,
-      url: data.AbstractURL
-    });
+  if (deduped.length === 0) {
+    throw new Error("Sem noticias de provedores abertos");
   }
 
-  flattenDuckTopics(data.RelatedTopics)
-    .filter((topic) => topic.FirstURL && topic.Text)
-    .slice(0, 8)
-    .forEach((topic) => {
-      results.push({
-        title: topic.Text.split(" - ")[0] || topic.Text,
-        description: topic.Text,
-        url: topic.FirstURL
-      });
-    });
-
-  const deduped = uniqueBy(results, (item) => item.url).slice(0, 8);
-  const encoded = encodeURIComponent(term);
-
   return {
-    results: deduped,
-    links: [
-      { label: "DuckDuckGo", url: `https://duckduckgo.com/?q=${encoded}` },
-      { label: "Brave Search", url: `https://search.brave.com/search?q=${encoded}` },
-      { label: "Wikipedia", url: `https://pt.wikipedia.org/w/index.php?search=${encoded}` },
-      { label: "Reddit", url: `https://www.reddit.com/search/?q=${encoded}&sort=new` }
-    ]
+    items: deduped,
+    providerErrors: [
+      googleResult.status === "rejected" ? "Google News" : null,
+      bingResult.status === "rejected" ? "Bing News" : null
+    ].filter(Boolean)
   };
 }
 
-function flattenDuckTopics(topics) {
-  if (!Array.isArray(topics)) {
-    return [];
+async function fetchProviderRssNews(provider, rssUrl, signal) {
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
+  const xmlText = await fetchText(proxyUrl, signal, 11000);
+  return parseRssNewsItems(xmlText, provider);
+}
+
+function parseRssNewsItems(xmlText, provider) {
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(xmlText, "application/xml");
+  const hasError = xml.querySelector("parsererror");
+
+  if (hasError) {
+    throw new Error(`RSS invalido (${provider})`);
   }
 
-  const items = [];
+  const items = Array.from(xml.querySelectorAll("item"));
+  return items.map((item) => {
+    const rawTitle = item.querySelector("title")?.textContent || "Sem titulo";
+    const rawLink = item.querySelector("link")?.textContent || "";
+    const rawDescription = item.querySelector("description")?.textContent || "";
+    const rawSource = item.querySelector("source, News\\:Source")?.textContent || provider;
+    const rawDate = item.querySelector("pubDate")?.textContent || "";
 
-  topics.forEach((topic) => {
-    if (Array.isArray(topic.Topics)) {
-      topic.Topics.forEach((nested) => items.push(nested));
-      return;
-    }
-
-    items.push(topic);
+    return {
+      source: rawSource || provider,
+      title: stripHtml(rawTitle),
+      url: unwrapBingNewsUrl(rawLink),
+      description: stripHtml(rawDescription),
+      date: parseFlexibleDate(rawDate)
+    };
   });
-
-  return items;
 }
 
 async function fetchLatestNews(term, signal) {
@@ -311,9 +305,10 @@ async function fetchTechnicalDiscussions(term, signal) {
 
   const hnItems = readSettled(hnResult);
   const redditItems = readSettled(redditResult);
+  const ranked = rankDiscussionItems([...hnItems, ...redditItems]).slice(0, 12);
 
   return {
-    items: sortByDateDesc([...hnItems, ...redditItems]).slice(0, 12),
+    items: ranked,
     redditBlocked: redditResult.status === "rejected"
   };
 }
@@ -336,6 +331,7 @@ async function fetchHackerNewsRecent(term, signal) {
       url: hit.url || hit.story_url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
       author: hit.author || "autor desconhecido",
       score: Number.isFinite(hit.points) ? hit.points : 0,
+      comments: Number.isFinite(hit.num_comments) ? hit.num_comments : 0,
       date: hit.created_at ? new Date(hit.created_at) : null
     }))
   );
@@ -383,6 +379,7 @@ async function fetchRedditDiscussions(term, signal) {
         url: permalink ? `https://www.reddit.com${permalink}` : `https://www.reddit.com/search/?q=${encodeURIComponent(term)}&sort=new`,
         author: post.author || "autor desconhecido",
         score: Number.isFinite(post.score) ? post.score : 0,
+        comments: Number.isFinite(post.num_comments) ? post.num_comments : 0,
         subreddit: post.subreddit_name_prefixed || "r/unknown",
         date: Number.isFinite(post.created_utc) ? new Date(post.created_utc * 1000) : null
       };
@@ -620,45 +617,41 @@ async function fetchWithTimeout(url, parentSignal, timeoutMs) {
 
 function renderOpenSearch(payload, hasError = false) {
   dom.openSearchList.innerHTML = "";
-  dom.openSearchLinks.innerHTML = "";
 
   if (hasError || !payload) {
     dom.openSearchList.appendChild(buildEmpty("Busca aberta indisponivel no momento."));
     return 0;
   }
 
-  const results = Array.isArray(payload.results) ? payload.results : [];
+  if (Array.isArray(payload.providerErrors) && payload.providerErrors.length > 0) {
+    dom.openSearchList.appendChild(
+      buildEmpty(`Fontes temporariamente indisponiveis: ${payload.providerErrors.join(", ")}.`)
+    );
+  }
+
+  const results = Array.isArray(payload.items) ? payload.items : [];
   if (results.length === 0) {
-    dom.openSearchList.appendChild(buildEmpty("Sem itens na API de busca aberta para este termo."));
+    dom.openSearchList.appendChild(buildEmpty("Sem noticias recentes nos provedores abertos para este termo."));
   } else {
     results.forEach((item) => {
       const box = document.createElement("article");
-      box.className = "mini-item";
+      box.className = "result-card";
 
-      const link = document.createElement("a");
-      link.href = item.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = item.title || item.url;
+      const title = document.createElement("h3");
+      title.appendChild(buildAnchor(item.url, item.title || item.url));
+
+      const meta = document.createElement("p");
+      meta.className = "meta";
+      meta.append(buildMetaSource(item.source), document.createTextNode(formatDate(item.date)));
 
       const description = document.createElement("p");
-      description.textContent = item.description || "Sem descricao.";
+      description.className = "meta";
+      description.textContent = item.description || "Sem resumo disponivel.";
 
-      box.append(link, description);
+      box.append(title, meta, description);
       dom.openSearchList.appendChild(box);
     });
   }
-
-  const links = Array.isArray(payload.links) ? payload.links : [];
-  links.forEach((item) => {
-    const anchor = document.createElement("a");
-    anchor.className = "search-link";
-    anchor.href = item.url;
-    anchor.target = "_blank";
-    anchor.rel = "noopener noreferrer";
-    anchor.textContent = item.label;
-    dom.openSearchLinks.appendChild(anchor);
-  });
 
   return results.length;
 }
@@ -776,8 +769,14 @@ function renderDiscussions(payload, hasError = false) {
     if (Number.isFinite(item.score)) {
       parts.push(`${item.score} pontos`);
     }
+    if (Number.isFinite(item.comments)) {
+      parts.push(`${item.comments} comentarios`);
+    }
     if (item.subreddit) {
       parts.push(item.subreddit);
+    }
+    if (Number.isFinite(item.rankScore)) {
+      parts.push(`relevancia ${item.rankScore.toFixed(1)}`);
     }
     parts.push(formatDate(item.date));
 
@@ -860,6 +859,84 @@ function buildEmpty(message) {
   empty.className = "meta";
   empty.textContent = message;
   return empty;
+}
+
+function rankDiscussionItems(items) {
+  return [...items]
+    .map((item) => ({
+      ...item,
+      rankScore: computeDiscussionRank(item)
+    }))
+    .sort((a, b) => {
+      if (b.rankScore !== a.rankScore) {
+        return b.rankScore - a.rankScore;
+      }
+
+      const scoreA = Number.isFinite(a.score) ? a.score : 0;
+      const scoreB = Number.isFinite(b.score) ? b.score : 0;
+      if (scoreB !== scoreA) {
+        return scoreB - scoreA;
+      }
+
+      const dateA = a?.date instanceof Date && !Number.isNaN(a.date.getTime()) ? a.date.getTime() : -Infinity;
+      const dateB = b?.date instanceof Date && !Number.isNaN(b.date.getTime()) ? b.date.getTime() : -Infinity;
+      return dateB - dateA;
+    });
+}
+
+function computeDiscussionRank(item) {
+  const score = Number.isFinite(item.score) ? item.score : 0;
+  const comments = Number.isFinite(item.comments) ? item.comments : 0;
+  const popularity = score + comments * 2;
+  const popularityScore = Math.log10(popularity + 1) * 55;
+
+  const ageHours = item.date instanceof Date && !Number.isNaN(item.date.getTime())
+    ? Math.max(0, (Date.now() - item.date.getTime()) / (1000 * 60 * 60))
+    : 120;
+  const freshnessScore = Math.max(0, 45 - ageHours * 0.9);
+
+  return popularityScore + freshnessScore;
+}
+
+function normalizeNewsIdentity(item) {
+  const normalizedTitle = (item.title || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const normalizedUrl = (item.url || "").split("?")[0].toLowerCase();
+  return `${normalizedTitle}|${normalizedUrl}`;
+}
+
+function stripHtml(value) {
+  if (!value) {
+    return "";
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${value}</body>`, "text/html");
+  return doc.body?.textContent?.replace(/\s+/g, " ").trim() || "";
+}
+
+function unwrapBingNewsUrl(link) {
+  try {
+    const url = new URL(link);
+    if (url.hostname.includes("bing.com")) {
+      const target = url.searchParams.get("url");
+      if (target) {
+        return decodeURIComponent(target);
+      }
+    }
+  } catch {
+    return link || "";
+  }
+
+  return link || "";
+}
+
+function parseFlexibleDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function parseGdeltDate(raw) {
