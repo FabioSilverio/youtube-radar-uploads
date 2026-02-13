@@ -1,48 +1,20 @@
-# Radar de Uploads YouTube
+# Radar de Conceitos
 
-App web com 5 secoes:
+Site estatico para monitorar um termo (software, empresa, pessoa, conceito) e mostrar:
 
-- `FEED`: junta os ultimos videos por categoria (`News`, `Entretenimento`, `Entrevistas`).
-- `CANAIS`: area para adicionar/remover canais e definir categoria de cada canal.
-- `ARTIGOS`: salva links para ler depois com imagem, subtitulo e veiculo.
-- `ASSISTIR DEPOIS`: guarda os videos que voce salvou.
-- `JA VISTOS`: recebe os videos marcados como assistidos (saem do FEED).
-
-Tambem permite:
-
-- adicionar canais por URL (`/@canal`, `/channel/UC...`, `/user/...`, `/c/...`),
-- salvar artigos por link para leitura posterior,
-- marcar video como `Ja assisti`,
-- salvar/remover videos em `Assistir Depois`,
-- sincronizacao por codigo/link entre dispositivos,
-- sincronizacao automatica em nuvem via GitHub Gist.
+- ultimas noticias (`GDELT`)
+- contexto enciclopedico (`Wikipedia`)
+- discussao tecnica (`Hacker News`)
+- perfis publicos relacionados (`GitHub` e `Bluesky`)
 
 ## Como usar
 
 1. Abra o site.
-2. Cole sua **YouTube API key** e clique em `Salvar chave`.
-3. Adicione URLs dos canais que quer acompanhar.
-4. Escolha a categoria do canal ao cadastrar (ou edite depois na aba `CANAIS`).
-5. Use `Atualizar feed` para buscar uploads recentes.
-5. Para nuvem automatica, informe um token GitHub com escopo `gist` e clique em `Conectar nuvem`.
-
-## Sync na nuvem (GitHub Gist)
-
-1. Gere um token GitHub (classic) com permissao `gist`.
-2. No app, cole o token em `Sync na nuvem`.
-3. Clique em `Conectar nuvem`.
-4. O app passa a sincronizar automaticamente seus canais, videos salvos e `JA VISTOS`.
-
-## API Key (YouTube Data API v3)
-
-1. Crie um projeto no Google Cloud.
-2. Ative `YouTube Data API v3`.
-3. Crie uma API key.
-4. (Opcional) Restrinja por dominio quando estiver no GitHub Pages.
+2. Digite um termo na busca (ex.: `OpenAI`, `Kubernetes`, `Figma`).
+3. Clique em `Escanear`.
+4. Veja os blocos de noticias, Wikipedia, discussao tecnica e perfis publicos.
 
 ## Rodar local
-
-Opcao simples:
 
 ```bash
 npm install
@@ -53,12 +25,14 @@ Depois abra `http://localhost:3000`.
 
 ## Deploy no GitHub Pages
 
-Este repo ja inclui o workflow `.github/workflows/deploy-pages.yml`.
+Este repo ja inclui workflow para publicar a pasta `public/`.
 
-Quando fizer push para `main`, o GitHub Actions publica automaticamente a pasta `public/` no Pages.
+1. Faça push para `main`.
+2. Abra `Settings > Pages` e deixe `Source: GitHub Actions`.
+3. Aguarde o job terminar em `Actions`.
+4. Use a URL gerada no ambiente `github-pages`.
 
-Depois do primeiro push:
+## Observacoes
 
-1. Abra `Settings > Pages` no repo.
-2. Em `Build and deployment`, deixe `Source: GitHub Actions`.
-3. Aguarde o workflow terminar e use a URL gerada pelo Pages.
+- O projeto usa apenas APIs publicas acessadas no navegador.
+- Alguns provedores podem limitar requisoes por minuto (especialmente o GitHub sem token).

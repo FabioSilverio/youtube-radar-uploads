@@ -3,219 +3,94 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Radar de Uploads YouTube</title>
+    <title>Radar de Conceitos</title>
+    <meta
+      name="description"
+      content="Digite um termo e receba noticias recentes, contexto da Wikipedia e perfis publicos relacionados."
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Manrope:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=20260209-1" />
-    <link rel="apple-touch-icon" href="./favicon.svg?v=20260209-1" />
-    <link rel="stylesheet" href="./styles.css?v=20260209-4" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css?v=20260213-1" />
   </head>
   <body>
-    <header class="site-header">
-      <div class="brand-block">
-        <p class="eyebrow">Seu painel pessoal</p>
-        <h1>Radar de Uploads</h1>
-        <p class="subtitle">Centralize os videos novos dos canais que voce acompanha.</p>
+    <div class="bg-grid" aria-hidden="true"></div>
+    <header class="hero">
+      <p class="label">Radar web em tempo quase real</p>
+      <h1>Radar de Conceitos</h1>
+      <p class="hero-copy">
+        Busque nome de software, empresa, pessoa ou ideia. O radar junta noticias, enciclopedia e perfis publicos.
+      </p>
+
+      <form id="search-form" class="search-shell">
+        <label class="visually-hidden" for="query-input">Termo de busca</label>
+        <input
+          id="query-input"
+          name="query"
+          type="text"
+          minlength="2"
+          placeholder="Exemplo: Cursor, OpenAI, Figma, Kubernetes..."
+          required
+        />
+        <button id="search-btn" type="submit">Escanear</button>
+      </form>
+
+      <div class="quick-searches" aria-label="Buscas rapidas">
+        <button type="button" class="quick-chip" data-term="OpenAI">OpenAI</button>
+        <button type="button" class="quick-chip" data-term="Figma">Figma</button>
+        <button type="button" class="quick-chip" data-term="Kubernetes">Kubernetes</button>
+        <button type="button" class="quick-chip" data-term="Notion">Notion</button>
       </div>
-      <div class="header-controls">
-        <div class="tabs">
-          <button id="tab-feed" class="tab-button active" type="button">FEED</button>
-          <button id="tab-channels" class="tab-button" type="button">CANAIS</button>
-          <button id="tab-articles" class="tab-button" type="button">ARTIGOS</button>
-          <button id="tab-watch-later" class="tab-button" type="button">ASSISTIR DEPOIS</button>
-          <button id="tab-seen" class="tab-button" type="button">JA VISTOS</button>
-        </div>
-        <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
-          Modo noturno
-        </button>
-      </div>
+      <p id="status" class="status">Digite um termo para iniciar.</p>
     </header>
 
-    <main class="container">
-      <p id="status-message" class="status-message"></p>
-
-      <section id="feed-section" class="panel">
-        <div class="feed-intro">
-          <h2>Novos videos por categoria</h2>
-          <p>Seus canais sao organizados por tag para facilitar a leitura.</p>
+    <main class="layout">
+      <section class="panel" aria-labelledby="news-heading">
+        <div class="panel-head">
+          <h2 id="news-heading">Ultimas noticias</h2>
+          <span class="source-badge">GDELT</span>
         </div>
-
-        <div class="actions">
-          <button id="refresh-feed" type="button">Atualizar feed</button>
-        </div>
-
-        <div class="feed-toolbar">
-          <div id="feed-filter-group" class="feed-filter-group" aria-label="Filtros do feed">
-            <button type="button" class="feed-filter-btn" data-category-filter="news" aria-pressed="true">
-              News
-            </button>
-            <button
-              type="button"
-              class="feed-filter-btn"
-              data-category-filter="entertainment"
-              aria-pressed="true"
-            >
-              Entretenimento
-            </button>
-            <button
-              type="button"
-              class="feed-filter-btn"
-              data-category-filter="interviews"
-              aria-pressed="true"
-            >
-              Entrevistas
-            </button>
-            <button id="feed-show-all" type="button" class="feed-secondary-btn">Mostrar todas</button>
-          </div>
-          <div class="feed-layout-group" aria-label="Layout do feed">
-            <button id="feed-layout-stacked" type="button" class="feed-layout-btn" aria-pressed="true">
-              Empilhado
-            </button>
-            <button id="feed-layout-columns" type="button" class="feed-layout-btn" aria-pressed="false">
-              Lado a lado
-            </button>
-          </div>
-        </div>
-
-        <div id="feed-list" class="feed-groups"></div>
+        <div id="news-list" class="card-list"></div>
       </section>
 
-      <section id="channels-section" class="panel hidden">
-        <div class="api-key-box">
-          <label for="api-key">YouTube API Key</label>
-          <div class="form-row">
-            <input id="api-key" type="password" placeholder="Cole sua API key aqui" />
-            <button id="save-api-key" type="button">Salvar chave</button>
-          </div>
-          <p class="hint">
-            Crie uma chave em Google Cloud e habilite YouTube Data API v3.
-          </p>
+      <section class="panel" aria-labelledby="wiki-heading">
+        <div class="panel-head">
+          <h2 id="wiki-heading">Wikipedia e contexto</h2>
+          <span class="source-badge">MediaWiki</span>
         </div>
+        <article id="wiki-summary" class="summary-card empty-box">
+          Sem dados ainda.
+        </article>
+        <div id="wiki-related" class="mini-list"></div>
+      </section>
 
-        <form id="add-channel-form" class="add-channel-form">
-          <label for="channel-url">URL do canal do YouTube</label>
-          <div class="form-row">
-            <input
-              id="channel-url"
-              type="url"
-              placeholder="https://www.youtube.com/@canal"
-              required
-            />
-            <select id="channel-category" required>
-              <option value="news">News</option>
-              <option value="entertainment">Entretenimento</option>
-              <option value="interviews">Entrevistas</option>
-            </select>
-            <button type="submit">Adicionar canal</button>
-          </div>
-        </form>
-
-        <div class="channels-manager">
-          <h2>Canais cadastrados</h2>
-          <div id="channels-list" class="channels-manage-list"></div>
+      <section class="panel" aria-labelledby="discussion-heading">
+        <div class="panel-head">
+          <h2 id="discussion-heading">Discussao tecnica</h2>
+          <span class="source-badge">Hacker News</span>
         </div>
+        <div id="hn-list" class="card-list"></div>
       </section>
 
-      <section id="articles-section" class="panel hidden">
-        <form id="add-article-form" class="add-channel-form">
-          <label for="article-url">Link do artigo</label>
-          <div class="form-row">
-            <input
-              id="article-url"
-              type="url"
-              placeholder="https://site.com.br/materia"
-              required
-            />
-            <button type="submit">Salvar para ler depois</button>
-          </div>
-        </form>
-
-        <div id="article-list" class="article-list"></div>
-      </section>
-
-      <section id="watch-later-section" class="panel hidden">
-        <h2>Videos salvos para assistir depois</h2>
-        <div id="watch-later-list" class="video-list"></div>
-      </section>
-
-      <section id="seen-section" class="panel hidden">
-        <h2>Videos ja vistos</h2>
-        <div id="seen-list" class="video-list"></div>
+      <section class="panel" aria-labelledby="profiles-heading">
+        <div class="panel-head">
+          <h2 id="profiles-heading">Perfis publicos relacionados</h2>
+          <span class="source-badge">GitHub + Bluesky</span>
+        </div>
+        <div id="profiles-list" class="profile-grid"></div>
       </section>
     </main>
 
-    <nav class="mobile-nav" aria-label="Navegacao principal">
-      <button id="tab-feed-mobile" class="mobile-nav-btn active" type="button">Feed</button>
-      <button id="tab-channels-mobile" class="mobile-nav-btn" type="button">Canais</button>
-      <button id="tab-articles-mobile" class="mobile-nav-btn" type="button">Artigos</button>
-      <button id="tab-watch-later-mobile" class="mobile-nav-btn" type="button">Salvar</button>
-      <button id="tab-seen-mobile" class="mobile-nav-btn" type="button">Vistos</button>
-    </nav>
+    <footer class="footnote">
+      <p>
+        Dados vindos de APIs publicas. Alguns provedores podem limitar volume de consultas.
+      </p>
+    </footer>
 
-    <details class="sync-panel">
-      <summary>Sincronizacao</summary>
-      <div class="sync-panel-body">
-        <div class="sync-box">
-          <label for="cloud-token">Sync na nuvem (GitHub Gist)</label>
-          <div class="form-row">
-            <input id="cloud-token" type="password" placeholder="GitHub token com permissao gist" />
-            <button id="connect-cloud-sync" type="button">Conectar nuvem</button>
-          </div>
-          <div class="form-row">
-            <input id="cloud-gist-id" type="text" placeholder="Gist ID (opcional)" />
-            <button id="pull-cloud-sync" type="button">Sincronizar agora</button>
-          </div>
-          <p id="cloud-sync-status" class="hint">
-            Ao conectar, o app salva e atualiza automaticamente seus dados na nuvem.
-          </p>
-        </div>
-
-        <div class="sync-box">
-          <label for="sync-code">Sincronizar entre dispositivos</label>
-          <div class="form-row">
-            <button id="generate-sync-code" type="button">Gerar codigo</button>
-            <button id="copy-sync-link" type="button">Copiar link</button>
-          </div>
-          <textarea
-            id="sync-code"
-            rows="3"
-            placeholder="Cole aqui o codigo de sincronizacao"
-          ></textarea>
-          <div class="actions">
-            <button id="import-sync-code" type="button">Importar codigo</button>
-          </div>
-          <p class="hint">Leve seus canais e videos salvos para outro dispositivo.</p>
-        </div>
-      </div>
-    </details>
-
-    <template id="video-card-template">
-      <article class="video-card">
-        <div class="thumb-wrap">
-          <img class="thumb" alt="" loading="lazy" />
-          <span class="duration-badge"></span>
-        </div>
-        <div class="video-content">
-          <h3><a target="_blank" rel="noopener noreferrer"></a></h3>
-          <p class="meta"></p>
-          <p class="duration-text"></p>
-          <div class="controls">
-            <label class="watched-label">
-              <input type="checkbox" class="watched-checkbox" />
-              Ja assisti
-            </label>
-            <button type="button" class="save-button">Salvar para assistir depois</button>
-            <button type="button" class="remove-button hidden">Remover</button>
-            <button type="button" class="restore-button hidden">Mover para FEED</button>
-          </div>
-        </div>
-      </article>
-    </template>
-
-    <script src="./app.js?v=20260209-4" defer></script>
+    <script src="./app.js?v=20260213-1" defer></script>
   </body>
 </html>
