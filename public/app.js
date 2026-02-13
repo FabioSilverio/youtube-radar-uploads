@@ -28,6 +28,11 @@ const QUERY_GENERIC_TERMS = new Set([
   "noticia", "noticias", "notícia", "notícias", "latest", "news", "termo", "conceito"
 ]);
 
+const RESERVED_INSTAGRAM_PATHS = new Set([
+  "about", "accounts", "developer", "direct", "download", "explore", "legal",
+  "p", "policies", "privacy", "reel", "reels", "stories", "tags", "tv"
+]);
+
 dom.form.addEventListener("submit", (event) => {
   event.preventDefault();
   const term = dom.input.value.trim();
@@ -500,29 +505,36 @@ async function fetchProfiles(term, signal) {
   const variants = buildQueryVariants(term);
   let merged = [];
 
-  for (const variant of variants) {
-    const [githubResult, blueskyResult, wikidataResult] = await Promise.allSettled([
+  for (let index = 0; index < variants.length; index += 1) {
+    const variant = variants[index];
+    const tasks = [
       fetchGitHubProfiles(variant, signal),
       fetchBlueskyProfiles(variant, signal),
       fetchWikidataSocialProfiles(variant, signal)
-    ]);
+    ];
+
+    if (index === 0 || merged.length === 0) {
+      tasks.push(fetchSearchEngineSocialProfiles(variant, signal));
+    }
+
+    const settled = await Promise.allSettled(tasks);
+    const collected = settled.flatMap((result) => readSettled(result));
 
     merged = uniqueBy(
       [
         ...merged,
-        ...readSettled(githubResult),
-        ...readSettled(blueskyResult),
-        ...readSettled(wikidataResult)
+        ...collected
       ],
       (item) => `${item.platform}|${item.url}`
     );
 
-    if (merged.length >= 8) {
+    if (merged.length >= 10) {
       break;
     }
   }
 
-  return sortByDateDesc(merged).slice(0, 12);
+  const sorted = sortByDateDesc(merged).slice(0, 12);
+  return hydrateProfileAvatars(sorted, signal);
 }
 
 async function fetchGitHubProfiles(term, signal) {
@@ -615,31 +627,398 @@ async function fetchWikidataSocialProfiles(term, signal) {
   Object.values(allEntities).forEach((entity) => {
     const label = pickLabel(entity, ["pt", "en"]) || "Entidade";
     const description = pickDescription(entity, ["pt", "en"]);
+    const wikiAvatar = pickWikidataAvatar(entity);
+    const note = description ? `${label} - ${description}` : `${label} (Wikidata)`;
 
     extractClaimValues(entity, "P2002").forEach((handle) => {
+      const username = handle.replace(/^@/, "").trim();
+      if (!username) {
+        return;
+      }
+
       results.push({
         platform: "X/Twitter",
-        name: `@${handle}`,
-        url: `https://x.com/${encodeURIComponent(handle)}`,
-        avatar: "",
+        name: `@${username}`,
+        url: `https://x.com/${encodeURIComponent(username)}`,
+        avatar: wikiAvatar,
         date: null,
-        note: description ? `${label} - ${description}` : `${label} (Wikidata)`
+        note
       });
     });
 
     extractClaimValues(entity, "P4265").forEach((username) => {
+      const account = username.replace(/^u\//i, "").trim();
+      if (!account) {
+        return;
+      }
+
       results.push({
         platform: "Reddit",
-        name: `u/${username}`,
-        url: `https://www.reddit.com/user/${encodeURIComponent(username)}`,
-        avatar: "",
+        name: `u/${account}`,
+        url: `https://www.reddit.com/user/${encodeURIComponent(account)}`,
+        avatar: wikiAvatar,
         date: null,
-        note: description ? `${label} - ${description}` : `${label} (Wikidata)`
+        note
+      });
+    });
+
+    extractClaimValues(entity, "P6634").forEach((value) => {
+      const linkedin = normalizeLinkedInIdentity(value, "in");
+      if (!linkedin) {
+        return;
+      }
+
+      results.push({
+        platform: "LinkedIn",
+        name: label,
+        url: linkedin.url,
+        avatar: wikiAvatar,
+        date: null,
+        note
+      });
+    });
+
+    extractClaimValues(entity, "P4264").forEach((value) => {
+      const linkedin = normalizeLinkedInIdentity(value, "company");
+      if (!linkedin) {
+        return;
+      }
+
+      results.push({
+        platform: "LinkedIn",
+        name: label,
+        url: linkedin.url,
+        avatar: wikiAvatar,
+        date: null,
+        note
+      });
+    });
+
+    extractClaimValues(entity, "P2003").forEach((username) => {
+      const instagram = normalizeInstagramIdentity(username);
+      if (!instagram) {
+        return;
+      }
+
+      results.push({
+        platform: "Instagram",
+        name: `@${instagram.username}`,
+        url: instagram.url,
+        avatar: `https://unavatar.io/instagram/${encodeURIComponent(instagram.username)}`,
+        date: null,
+        note
       });
     });
   });
 
-  return uniqueBy(results, (item) => item.url);
+  return uniqueBy(results, (item) => `${item.platform}|${item.url}`);
+}
+
+async function fetchSearchEngineSocialProfiles(term, signal) {
+  const sources = [
+    { platform: "LinkedIn", query: `"${term}" site:linkedin.com/company` },
+    { platform: "LinkedIn", query: `"${term}" site:linkedin.com/in` },
+    { platform: "Instagram", query: `"${term}" site:instagram.com` }
+  ];
+
+  const settled = await Promise.allSettled(
+    sources.map((source) => fetchBingWebSearchItems(source, signal))
+  );
+
+  const merged = settled.flatMap((result) => readSettled(result));
+  return uniqueBy(sortByDateDesc(merged), (item) => `${item.platform}|${item.url}`).slice(0, 6);
+}
+
+async function fetchBingWebSearchItems(source, signal) {
+  const rssUrl = `https://www.bing.com/search?q=${encodeURIComponent(source.query)}&format=rss`;
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
+  const xmlText = await fetchText(proxyUrl, signal, 11000);
+  const feedItems = parseRssNewsItems(xmlText, "Bing Search");
+
+  return feedItems.flatMap((item) => {
+    const profile = source.platform === "LinkedIn"
+      ? parseLinkedInUrl(item.url)
+      : parseInstagramUrl(item.url);
+
+    if (!profile) {
+      return [];
+    }
+
+    const title = item.title || "Perfil publico";
+    const normalizedName = source.platform === "Instagram"
+      ? `@${profile.username}`
+      : cleanLinkedInTitle(title, profile);
+
+    const avatar = source.platform === "Instagram"
+      ? `https://unavatar.io/instagram/${encodeURIComponent(profile.username)}`
+      : "";
+
+    return [{
+      platform: source.platform,
+      name: normalizedName,
+      url: profile.url,
+      avatar,
+      date: item.date,
+      note: `Encontrado na busca aberta (${item.source || "Bing"})`
+    }];
+  });
+}
+
+async function hydrateProfileAvatars(profiles, signal) {
+  const hydrated = await Promise.all(
+    profiles.map(async (profile) => {
+      let linkedInAvatar = "";
+
+      if (profile.platform === "LinkedIn") {
+        linkedInAvatar = await fetchLinkedInAvatarFromPage(profile.url, signal);
+      }
+
+      const avatarCandidates = uniqueBy(
+        [
+          linkedInAvatar,
+          ...buildProfileAvatarCandidates(profile),
+          "./favicon.svg"
+        ].filter(Boolean),
+        (value) => value
+      );
+
+      return {
+        ...profile,
+        avatar: avatarCandidates[0] || "./favicon.svg",
+        avatarCandidates
+      };
+    })
+  );
+
+  return hydrated;
+}
+
+async function fetchLinkedInAvatarFromPage(profileUrl, signal) {
+  const parsed = parseLinkedInUrl(profileUrl);
+
+  if (!parsed) {
+    return "";
+  }
+
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(parsed.url)}`;
+    const html = await fetchText(proxyUrl, signal, 7000);
+    return extractLinkedInImageFromHtml(html);
+  } catch {
+    return "";
+  }
+}
+
+function extractLinkedInImageFromHtml(html) {
+  if (!html) {
+    return "";
+  }
+
+  const ogImageMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+  if (ogImageMatch?.[1]) {
+    return decodeHtmlEntities(ogImageMatch[1]);
+  }
+
+  const companyLogoMatch = html.match(/https:\/\/media\.licdn\.com\/[^"'\\\s>]*(company-logo|profile-displayphoto)[^"'\\\s>]*/i);
+  if (companyLogoMatch?.[0]) {
+    return decodeHtmlEntities(companyLogoMatch[0]);
+  }
+
+  const genericMediaMatch = html.match(/https:\/\/media\.licdn\.com\/[^"'\\\s>]+/i);
+  return genericMediaMatch?.[0] ? decodeHtmlEntities(genericMediaMatch[0]) : "";
+}
+
+function buildProfileAvatarCandidates(profile) {
+  const candidates = [];
+
+  if (profile.avatar) {
+    candidates.push(profile.avatar);
+  }
+
+  const domainAvatar = buildDomainAvatar(profile.url);
+  if (domainAvatar) {
+    candidates.push(domainAvatar);
+  }
+
+  const nameAvatar = buildNameAvatar(profile.name);
+  if (nameAvatar) {
+    candidates.push(nameAvatar);
+  }
+
+  return candidates;
+}
+
+function buildDomainAvatar(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    if (!host) {
+      return "";
+    }
+
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+  } catch {
+    return "";
+  }
+}
+
+function buildNameAvatar(name) {
+  const baseName = (name || "Perfil publico").trim();
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(baseName)}&size=128&background=0B3A3A&color=F4F9F8&bold=true`;
+}
+
+function pickWikidataAvatar(entity) {
+  const imageName = extractClaimValues(entity, "P18")[0] || extractClaimValues(entity, "P154")[0];
+  if (!imageName) {
+    return "";
+  }
+
+  const cleanFileName = imageName.replace(/^File:/i, "").trim();
+  if (!cleanFileName) {
+    return "";
+  }
+
+  return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(cleanFileName)}`;
+}
+
+function normalizeLinkedInIdentity(value, preferredType) {
+  const text = (value || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  if (text.includes("linkedin.com")) {
+    return parseLinkedInUrl(text);
+  }
+
+  const compact = text.replace(/^@/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  const split = compact.split("/").filter(Boolean);
+
+  if (split.length >= 2 && (split[0] === "in" || split[0] === "company")) {
+    return normalizeLinkedInIdentity(`https://www.linkedin.com/${split[0]}/${split[1]}`, preferredType);
+  }
+
+  const slug = split[0];
+  if (!slug) {
+    return null;
+  }
+
+  const safeSlug = slug.replace(/[^a-zA-Z0-9._-]/g, "");
+  if (!safeSlug) {
+    return null;
+  }
+
+  const type = preferredType === "company" ? "company" : "in";
+  return {
+    type,
+    slug: safeSlug,
+    url: `https://www.linkedin.com/${type}/${safeSlug}`
+  };
+}
+
+function parseLinkedInUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.toLowerCase().includes("linkedin.com")) {
+      return null;
+    }
+
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) {
+      return null;
+    }
+
+    const type = parts[0].toLowerCase();
+    if (type !== "in" && type !== "company") {
+      return null;
+    }
+
+    const slug = decodeURIComponent(parts[1]).replace(/[^a-zA-Z0-9._-]/g, "");
+    if (!slug) {
+      return null;
+    }
+
+    return {
+      type,
+      slug,
+      url: `https://www.linkedin.com/${type}/${slug}`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function cleanLinkedInTitle(title, profile) {
+  const raw = (title || "").trim();
+  if (!raw) {
+    return profile.type === "company" ? profile.slug : `@${profile.slug}`;
+  }
+
+  const cleaned = raw
+    .replace(/\s*\|\s*LinkedIn\s*$/i, "")
+    .replace(/\s*-\s*LinkedIn\s*$/i, "")
+    .trim();
+
+  return cleaned || (profile.type === "company" ? profile.slug : `@${profile.slug}`);
+}
+
+function normalizeInstagramIdentity(value) {
+  const text = (value || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  if (text.includes("instagram.com")) {
+    return parseInstagramUrl(text);
+  }
+
+  const username = text.replace(/^@/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) {
+    return null;
+  }
+
+  const lowered = username.toLowerCase();
+  if (RESERVED_INSTAGRAM_PATHS.has(lowered)) {
+    return null;
+  }
+
+  return {
+    username,
+    url: `https://www.instagram.com/${username}/`
+  };
+}
+
+function parseInstagramUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.toLowerCase().includes("instagram.com")) {
+      return null;
+    }
+
+    const username = decodeURIComponent(parsed.pathname.split("/").filter(Boolean)[0] || "");
+    if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) {
+      return null;
+    }
+
+    if (RESERVED_INSTAGRAM_PATHS.has(username.toLowerCase())) {
+      return null;
+    }
+
+    return {
+      username,
+      url: `https://www.instagram.com/${username}/`
+    };
+  } catch {
+    return null;
+  }
+}
+
+function decodeHtmlEntities(value) {
+  return (value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function extractClaimValues(entity, propertyId) {
@@ -930,9 +1309,9 @@ function renderProfiles(profiles, hasError = false) {
 
     const avatar = document.createElement("img");
     avatar.className = "avatar";
-    avatar.src = profile.avatar || "./favicon.svg";
     avatar.alt = `${profile.name} avatar`;
     avatar.loading = "lazy";
+    setImageWithFallbacks(avatar, profile.avatarCandidates || [profile.avatar, "./favicon.svg"]);
 
     const body = document.createElement("div");
     body.className = "profile-body";
@@ -945,11 +1324,14 @@ function renderProfiles(profiles, hasError = false) {
 
     const note = document.createElement("p");
     note.className = "profile-note";
+    const noteText = (profile.note || "").trim();
 
     if (profile.date) {
-      note.textContent = `${profile.note} | desde ${profile.date.toLocaleDateString("pt-BR")}`;
+      note.textContent = noteText
+        ? `${noteText} | desde ${profile.date.toLocaleDateString("pt-BR")}`
+        : `desde ${profile.date.toLocaleDateString("pt-BR")}`;
     } else {
-      note.textContent = profile.note;
+      note.textContent = noteText || "Perfil publico";
     }
 
     body.append(name, platform, note);
@@ -967,6 +1349,28 @@ function buildAnchor(url, text) {
   link.rel = "noopener noreferrer";
   link.textContent = text || url || "Abrir";
   return link;
+}
+
+function setImageWithFallbacks(imageElement, sources) {
+  const queue = uniqueBy(
+    (Array.isArray(sources) ? sources : [sources])
+      .filter(Boolean)
+      .concat("./favicon.svg"),
+    (value) => value
+  );
+
+  const applyNext = () => {
+    const nextSource = queue.shift();
+    if (!nextSource) {
+      imageElement.onerror = null;
+      return;
+    }
+
+    imageElement.src = nextSource;
+  };
+
+  imageElement.onerror = () => applyNext();
+  applyNext();
 }
 
 function buildMetaSource(source) {
