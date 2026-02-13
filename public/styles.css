@@ -119,26 +119,6 @@ button:hover {
   filter: brightness(1.03);
 }
 
-.quick-searches {
-  margin-top: 0.9rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.quick-chip {
-  border-radius: 999px;
-  padding: 0.42rem 0.76rem;
-  border-color: var(--line);
-  background: rgba(4, 23, 23, 0.85);
-  color: var(--muted);
-}
-
-.quick-chip:hover {
-  color: var(--ink);
-  border-color: var(--line-bright);
-}
-
 .status {
   margin: 0.9rem 0 0;
   min-height: 1.2rem;

@@ -5,7 +5,6 @@ const dom = {
   input: document.querySelector("#query-input"),
   status: document.querySelector("#status"),
   searchBtn: document.querySelector("#search-btn"),
-  quickChips: document.querySelectorAll(".quick-chip"),
   openSearchList: document.querySelector("#open-search-list"),
   newsList: document.querySelector("#news-list"),
   wikiSummary: document.querySelector("#wiki-summary"),
@@ -17,18 +16,22 @@ const dom = {
 let activeController = null;
 let currentRunId = 0;
 
+const QUERY_STOPWORDS = new Set([
+  "a", "as", "ao", "aos", "de", "da", "das", "do", "dos", "e", "em", "na", "nas", "no", "nos", "o", "os",
+  "que", "quem", "qual", "quais", "como", "onde", "quando", "com", "para", "por", "sobre", "ja", "já",
+  "foi", "foram", "ser", "sao", "são", "passou", "passaram", "trabalhou", "trabalhar",
+  "the", "who", "what", "where", "when", "how", "and", "or", "in", "on", "at", "from", "of", "to"
+]);
+
+const QUERY_GENERIC_TERMS = new Set([
+  "empresa", "empresas", "companhia", "companhias", "historia", "história",
+  "noticia", "noticias", "notícia", "notícias", "latest", "news", "termo", "conceito"
+]);
+
 dom.form.addEventListener("submit", (event) => {
   event.preventDefault();
   const term = dom.input.value.trim();
   runScan(term);
-});
-
-dom.quickChips.forEach((chip) => {
-  chip.addEventListener("click", () => {
-    const term = chip.dataset.term || "";
-    dom.input.value = term;
-    runScan(term);
-  });
 });
 
 async function runScan(term) {
@@ -157,9 +160,84 @@ function setContainerLoading(container, message) {
   container.appendChild(buildEmpty(message));
 }
 
+function buildQueryVariants(term) {
+  const original = (term || "").trim();
+  if (!original) {
+    return [];
+  }
+
+  const normalized = original
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  const meaningful = tokens.filter((token) => {
+    return token.length > 2 && !QUERY_STOPWORDS.has(token);
+  });
+
+  const bigrams = [];
+  for (let i = 0; i < meaningful.length - 1; i += 1) {
+    const a = meaningful[i];
+    const b = meaningful[i + 1];
+    if (!QUERY_GENERIC_TERMS.has(a) && !QUERY_GENERIC_TERMS.has(b)) {
+      bigrams.push(`${a} ${b}`);
+    }
+  }
+
+  const focus = bigrams[0]
+    || meaningful.filter((token) => !QUERY_GENERIC_TERMS.has(token)).slice(0, 2).join(" ")
+    || meaningful.slice(0, 3).join(" ");
+
+  const variants = [];
+  if (focus) {
+    variants.push(focus);
+  }
+  variants.push(original);
+  if (meaningful.length > 0) {
+    variants.push(meaningful.slice(0, 4).join(" "));
+  }
+
+  return uniqueBy(
+    variants
+      .map((value) => value.trim())
+      .filter((value) => value.length >= 2),
+    (value) => value.toLowerCase()
+  );
+}
+
 async function fetchOpenSearch(term, signal) {
-  const encodedTerm = encodeURIComponent(term);
-  const googleUrl = `https://news.google.com/rss/search?q=${encodedTerm}%20when%3A7d&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
+  const variants = buildQueryVariants(term);
+  let mergedItems = [];
+  let providerErrors = [];
+
+  for (const variant of variants) {
+    const result = await fetchOpenSearchWithVariant(variant, signal);
+    mergedItems = uniqueBy([...mergedItems, ...result.items], (item) => normalizeNewsIdentity(item));
+    providerErrors = uniqueBy([...providerErrors, ...result.providerErrors], (item) => item);
+
+    if (mergedItems.length >= 6) {
+      break;
+    }
+  }
+
+  const sorted = sortByDateDesc(mergedItems).slice(0, 12);
+  if (sorted.length === 0) {
+    throw new Error("Sem noticias de provedores abertos");
+  }
+
+  return {
+    items: sorted,
+    providerErrors
+  };
+}
+
+async function fetchOpenSearchWithVariant(query, signal) {
+  const encodedTerm = encodeURIComponent(query);
+  const googleUrl = `https://news.google.com/rss/search?q=${encodedTerm}%20when%3A30d&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
   const bingUrl = `https://www.bing.com/news/search?q=${encodedTerm}&format=rss`;
 
   const [googleResult, bingResult] = await Promise.allSettled([
@@ -167,20 +245,16 @@ async function fetchOpenSearch(term, signal) {
     fetchProviderRssNews("Bing News", bingUrl, signal)
   ]);
 
-  const googleItems = readSettled(googleResult);
-  const bingItems = readSettled(bingResult);
-  const combined = sortByDateDesc([...googleItems, ...bingItems]);
-  const deduped = uniqueBy(combined, (item) => normalizeNewsIdentity(item)).slice(0, 12);
-
-  if (deduped.length === 0) {
-    throw new Error("Sem noticias de provedores abertos");
-  }
+  const items = uniqueBy(
+    sortByDateDesc([...readSettled(googleResult), ...readSettled(bingResult)]),
+    (item) => normalizeNewsIdentity(item)
+  );
 
   return {
-    items: deduped,
+    items,
     providerErrors: [
-      googleResult.status === "rejected" ? "Google News" : null,
-      bingResult.status === "rejected" ? "Bing News" : null
+      googleResult.status === "rejected" ? `Google News (${query})` : null,
+      bingResult.status === "rejected" ? `Bing News (${query})` : null
     ].filter(Boolean)
   };
 }
@@ -219,36 +293,54 @@ function parseRssNewsItems(xmlText, provider) {
 }
 
 async function fetchLatestNews(term, signal) {
-  const params = new URLSearchParams({
-    query: `"${term}"`,
-    mode: "ArtList",
-    sort: "DateDesc",
-    maxrecords: "10",
-    format: "json"
-  });
+  const variants = buildQueryVariants(term);
+  let merged = [];
 
-  const url = `https://api.gdeltproject.org/api/v2/doc/doc?${params.toString()}`;
-  const data = await fetchJson(url, signal);
-  const list = Array.isArray(data.articles) ? data.articles : [];
+  for (const variant of variants) {
+    const params = new URLSearchParams({
+      query: variant,
+      mode: "ArtList",
+      sort: "DateDesc",
+      maxrecords: "12",
+      format: "json"
+    });
 
-  return sortByDateDesc(
-    list.map((item) => ({
+    const url = `https://api.gdeltproject.org/api/v2/doc/doc?${params.toString()}`;
+    const data = await fetchJson(url, signal);
+    const list = Array.isArray(data.articles) ? data.articles : [];
+
+    const mapped = list.map((item) => ({
       title: item.title || "Sem titulo",
       url: item.url,
       source: item.domain || item.sourcecommonname || "Fonte nao informada",
       date: parseGdeltDate(item.seendate)
-    }))
-  ).slice(0, 8);
+    }));
+
+    merged = uniqueBy([...merged, ...mapped], (item) => normalizeNewsIdentity(item));
+    if (merged.length >= 8) {
+      break;
+    }
+  }
+
+  return sortByDateDesc(merged).slice(0, 8);
 }
 
 async function fetchWikipediaContext(term, signal) {
-  let context = await searchWikipedia(term, "pt", signal);
+  const variants = buildQueryVariants(term);
 
-  if (context.related.length === 0) {
-    context = await searchWikipedia(term, "en", signal);
+  for (const variant of variants) {
+    let context = await searchWikipedia(variant, "pt", signal);
+
+    if (context.related.length === 0) {
+      context = await searchWikipedia(variant, "en", signal);
+    }
+
+    if (context.related.length > 0 || context.summary) {
+      return context;
+    }
   }
 
-  return context;
+  return { summary: null, related: [] };
 }
 
 async function searchWikipedia(term, lang, signal) {
@@ -298,18 +390,35 @@ async function searchWikipedia(term, lang, signal) {
 }
 
 async function fetchTechnicalDiscussions(term, signal) {
-  const [hnResult, redditResult] = await Promise.allSettled([
-    fetchHackerNewsRecent(term, signal),
-    fetchRedditDiscussions(term, signal)
-  ]);
+  const variants = buildQueryVariants(term);
+  let merged = [];
+  let redditBlocked = false;
 
-  const hnItems = readSettled(hnResult);
-  const redditItems = readSettled(redditResult);
-  const ranked = rankDiscussionItems([...hnItems, ...redditItems]).slice(0, 12);
+  for (const variant of variants) {
+    const [hnResult, redditResult] = await Promise.allSettled([
+      fetchHackerNewsRecent(variant, signal),
+      fetchRedditDiscussions(variant, signal)
+    ]);
+
+    if (redditResult.status === "rejected") {
+      redditBlocked = true;
+    }
+
+    const hnItems = readSettled(hnResult);
+    const redditItems = readSettled(redditResult);
+    const combined = [...hnItems, ...redditItems];
+    merged = uniqueBy([...merged, ...combined], (item) => `${item.source}|${item.url}`);
+
+    if (merged.length >= 10) {
+      break;
+    }
+  }
+
+  const ranked = rankDiscussionItems(merged).slice(0, 12);
 
   return {
     items: ranked,
-    redditBlocked: redditResult.status === "rejected"
+    redditBlocked
   };
 }
 
@@ -388,19 +497,32 @@ async function fetchRedditDiscussions(term, signal) {
 }
 
 async function fetchProfiles(term, signal) {
-  const [githubResult, blueskyResult, wikidataResult] = await Promise.allSettled([
-    fetchGitHubProfiles(term, signal),
-    fetchBlueskyProfiles(term, signal),
-    fetchWikidataSocialProfiles(term, signal)
-  ]);
+  const variants = buildQueryVariants(term);
+  let merged = [];
 
-  const merged = [
-    ...readSettled(githubResult),
-    ...readSettled(blueskyResult),
-    ...readSettled(wikidataResult)
-  ];
+  for (const variant of variants) {
+    const [githubResult, blueskyResult, wikidataResult] = await Promise.allSettled([
+      fetchGitHubProfiles(variant, signal),
+      fetchBlueskyProfiles(variant, signal),
+      fetchWikidataSocialProfiles(variant, signal)
+    ]);
 
-  return sortByDateDesc(uniqueBy(merged, (item) => `${item.platform}|${item.url}`)).slice(0, 12);
+    merged = uniqueBy(
+      [
+        ...merged,
+        ...readSettled(githubResult),
+        ...readSettled(blueskyResult),
+        ...readSettled(wikidataResult)
+      ],
+      (item) => `${item.platform}|${item.url}`
+    );
+
+    if (merged.length >= 8) {
+      break;
+    }
+  }
+
+  return sortByDateDesc(merged).slice(0, 12);
 }
 
 async function fetchGitHubProfiles(term, signal) {
