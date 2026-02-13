@@ -5,6 +5,11 @@ const dom = {
   input: document.querySelector("#query-input"),
   status: document.querySelector("#status"),
   searchBtn: document.querySelector("#search-btn"),
+  judicialForm: document.querySelector("#judicial-form"),
+  judicialInput: document.querySelector("#judicial-input"),
+  judicialBtn: document.querySelector("#judicial-btn"),
+  judicialStatus: document.querySelector("#judicial-status"),
+  judicialList: document.querySelector("#judicial-list"),
   openSearchList: document.querySelector("#open-search-list"),
   newsList: document.querySelector("#news-list"),
   wikiSummary: document.querySelector("#wiki-summary"),
@@ -14,7 +19,9 @@ const dom = {
 };
 
 let activeController = null;
+let judicialController = null;
 let currentRunId = 0;
+let currentJudicialRunId = 0;
 
 const QUERY_STOPWORDS = new Set([
   "a", "as", "ao", "aos", "de", "da", "das", "do", "dos", "e", "em", "na", "nas", "no", "nos", "o", "os",
@@ -39,6 +46,12 @@ dom.form.addEventListener("submit", (event) => {
   runScan(term);
 });
 
+dom.judicialForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const term = dom.judicialInput.value.trim();
+  runJudicialScan(term);
+});
+
 async function runScan(term) {
   if (!term || term.length < 2) {
     setStatus("Use pelo menos 2 caracteres.");
@@ -56,7 +69,11 @@ async function runScan(term) {
 
   setLoadingState(true);
   clearAllResults();
-  setStatus(`Escaneando "${term}"... 0/5 fontes`);
+  if (dom.judicialInput && !dom.judicialInput.value.trim()) {
+    dom.judicialInput.value = term;
+  }
+
+  setStatus(`Escaneando "${term}"... 0/6 fontes`);
 
   const tasks = [
     {
@@ -83,6 +100,11 @@ async function runScan(term) {
       label: "Perfis",
       fetcher: fetchProfiles,
       renderer: renderProfiles
+    },
+    {
+      label: "Processos judiciais",
+      fetcher: fetchJudicialRecords,
+      renderer: renderJudicialResults
     }
   ];
 
@@ -147,6 +169,68 @@ function setStatus(message) {
   dom.status.textContent = message;
 }
 
+async function runJudicialScan(term) {
+  if (!term || term.length < 2) {
+    setJudicialStatus("Use pelo menos 2 caracteres para buscar processos.");
+    return;
+  }
+
+  if (judicialController) {
+    judicialController.abort();
+  }
+
+  judicialController = new AbortController();
+  const signal = judicialController.signal;
+  const runId = ++currentJudicialRunId;
+  const startedAt = Date.now();
+
+  setJudicialLoadingState(true);
+  setContainerLoading(dom.judicialList, "Carregando processos judiciais...");
+  setJudicialStatus(`Buscando processos para "${term}"...`);
+
+  try {
+    const results = await fetchJudicialRecords(term, signal);
+    if (runId !== currentJudicialRunId) {
+      return;
+    }
+
+    const count = renderJudicialResults(results);
+    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+
+    if (count === 0) {
+      setJudicialStatus(`Nenhum processo encontrado para "${term}".`);
+    } else {
+      setJudicialStatus(`Busca de processos concluida em ${elapsed}s. Itens: ${count}.`);
+    }
+  } catch {
+    if (runId !== currentJudicialRunId) {
+      return;
+    }
+
+    renderJudicialResults(null, true);
+    setJudicialStatus("Falha ao buscar processos judiciais.");
+  } finally {
+    if (runId === currentJudicialRunId) {
+      setJudicialLoadingState(false);
+    }
+  }
+}
+
+function setJudicialLoadingState(isLoading) {
+  if (!dom.judicialBtn) {
+    return;
+  }
+
+  dom.judicialBtn.disabled = isLoading;
+  dom.judicialBtn.textContent = isLoading ? "Buscando..." : "Buscar processos";
+}
+
+function setJudicialStatus(message) {
+  if (dom.judicialStatus) {
+    dom.judicialStatus.textContent = message;
+  }
+}
+
 function clearAllResults() {
   setContainerLoading(dom.openSearchList, "Carregando noticias dos provedores...");
 
@@ -158,9 +242,15 @@ function clearAllResults() {
 
   setContainerLoading(dom.discussionList, "Carregando discussoes...");
   setContainerLoading(dom.profilesList, "Carregando perfis publicos...");
+  setContainerLoading(dom.judicialList, "Carregando processos judiciais...");
+  setJudicialStatus("Buscando processos judiciais...");
 }
 
 function setContainerLoading(container, message) {
+  if (!container) {
+    return;
+  }
+
   container.innerHTML = "";
   container.appendChild(buildEmpty(message));
 }
@@ -427,6 +517,102 @@ async function fetchTechnicalDiscussions(term, signal) {
   };
 }
 
+async function fetchJudicialRecords(term, signal) {
+  const variants = uniqueBy([term, ...buildQueryVariants(term)], (value) => value.toLowerCase());
+  let merged = [];
+
+  for (const variant of variants.slice(0, 3)) {
+    const queries = [
+      `${variant} processo judicial`,
+      `${variant} site:jusbrasil.com.br/processos`,
+      `${variant} site:pje.jus.br`,
+      `${variant} site:esaj.tjsp.jus.br`,
+      `${variant} site:tribunal`
+    ];
+
+    const settled = await Promise.allSettled(
+      queries.map((query) => fetchBingWebSearchFeed(query, signal))
+    );
+
+    const collected = settled
+      .flatMap((result) => readSettled(result))
+      .filter((item) => isLikelyJudicialResult(item));
+
+    merged = uniqueBy(
+      [...merged, ...collected],
+      (item) => normalizeNewsIdentity(item)
+    );
+
+    if (merged.length >= 12) {
+      break;
+    }
+  }
+
+  return sortByDateDesc(merged).slice(0, 12);
+}
+
+async function fetchBingWebSearchFeed(query, signal) {
+  const rssUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss`;
+  const proxyCandidates = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`
+  ];
+
+  let xmlText = "";
+  let lastError = null;
+
+  for (const proxyUrl of proxyCandidates) {
+    try {
+      const text = await fetchText(proxyUrl, signal, 11000);
+      xmlText = proxyUrl.includes("/get?url=")
+        ? JSON.parse(text)?.contents || ""
+        : text;
+
+      if (xmlText) {
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!xmlText) {
+    throw lastError || new Error("Falha ao carregar feed web");
+  }
+
+  const parsedItems = parseRssNewsItems(xmlText, "Bing Search");
+  return parsedItems.map((item) => ({
+    title: item.title || "Resultado sem titulo",
+    url: item.url,
+    source: extractHostLabel(item.url) || item.source || "Bing Search",
+    description: item.description || "",
+    date: item.date
+  }));
+}
+
+function isLikelyJudicialResult(item) {
+  const text = `${item.title || ""} ${item.description || ""} ${item.url || ""}`
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const strongKeywords = [
+    "processo", "judicial", "tribunal", "acordao", "sentenca", "jusbrasil",
+    "pje", "esaj", "trf", "trt", "tj", "stj", "stf"
+  ];
+
+  return strongKeywords.some((keyword) => text.includes(keyword));
+}
+
+function extractHostLabel(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, "");
+    return host || "";
+  } catch {
+    return "";
+  }
+}
+
 async function fetchHackerNewsRecent(term, signal) {
   const params = new URLSearchParams({
     query: term,
@@ -533,7 +719,7 @@ async function fetchProfiles(term, signal) {
     }
   }
 
-  const sorted = sortByDateDesc(merged).slice(0, 12);
+  const sorted = sortByDateDesc(merged).slice(0, 18);
   return hydrateProfileAvatars(sorted, signal);
 }
 
@@ -716,9 +902,11 @@ async function fetchWikidataSocialProfiles(term, signal) {
 
 async function fetchSearchEngineSocialProfiles(term, signal) {
   const sources = [
-    { platform: "LinkedIn", query: `"${term}" site:linkedin.com/company` },
-    { platform: "LinkedIn", query: `"${term}" site:linkedin.com/in` },
-    { platform: "Instagram", query: `"${term}" site:instagram.com` }
+    { platform: "LinkedIn", query: `${term} site:linkedin.com/company` },
+    { platform: "LinkedIn", query: `${term} site:linkedin.com/in` },
+    { platform: "LinkedIn", query: `${term} LinkedIn` },
+    { platform: "Instagram", query: `${term} site:instagram.com` },
+    { platform: "Instagram", query: `${term} Instagram` }
   ];
 
   const settled = await Promise.allSettled(
@@ -730,37 +918,47 @@ async function fetchSearchEngineSocialProfiles(term, signal) {
 }
 
 async function fetchBingWebSearchItems(source, signal) {
-  const rssUrl = `https://www.bing.com/search?q=${encodeURIComponent(source.query)}&format=rss`;
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
-  const xmlText = await fetchText(proxyUrl, signal, 11000);
-  const feedItems = parseRssNewsItems(xmlText, "Bing Search");
+  const feedItems = await fetchBingWebSearchFeed(source.query, signal);
 
   return feedItems.flatMap((item) => {
-    const profile = source.platform === "LinkedIn"
-      ? parseLinkedInUrl(item.url)
-      : parseInstagramUrl(item.url);
+    const candidates = uniqueBy(
+      [
+        item.url,
+        ...extractProfileUrlsFromText(item.title),
+        ...extractProfileUrlsFromText(item.description)
+      ].filter(Boolean),
+      (value) => value
+    );
 
-    if (!profile) {
+    const profiles = candidates
+      .map((candidate) => (source.platform === "LinkedIn"
+        ? parseLinkedInUrl(candidate)
+        : parseInstagramUrl(candidate)))
+      .filter(Boolean);
+
+    if (profiles.length === 0) {
       return [];
     }
 
-    const title = item.title || "Perfil publico";
-    const normalizedName = source.platform === "Instagram"
-      ? `@${profile.username}`
-      : cleanLinkedInTitle(title, profile);
+    return profiles.map((profile) => {
+      const title = item.title || "Perfil publico";
+      const normalizedName = source.platform === "Instagram"
+        ? `@${profile.username}`
+        : cleanLinkedInTitle(title, profile);
 
-    const avatar = source.platform === "Instagram"
-      ? `https://unavatar.io/instagram/${encodeURIComponent(profile.username)}`
-      : "";
+      const avatar = source.platform === "Instagram"
+        ? `https://unavatar.io/instagram/${encodeURIComponent(profile.username)}`
+        : "";
 
-    return [{
-      platform: source.platform,
-      name: normalizedName,
-      url: profile.url,
-      avatar,
-      date: item.date,
-      note: `Encontrado na busca aberta (${item.source || "Bing"})`
-    }];
+      return {
+        platform: source.platform,
+        name: normalizedName,
+        url: profile.url,
+        avatar,
+        date: item.date,
+        note: `Encontrado na busca aberta (${item.source || "Bing"})`
+      };
+    });
   });
 }
 
@@ -882,6 +1080,18 @@ function pickWikidataAvatar(entity) {
   }
 
   return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(cleanFileName)}`;
+}
+
+function extractProfileUrlsFromText(value) {
+  const text = value || "";
+  if (!text) {
+    return [];
+  }
+
+  const linkedInMatches = text.match(/https?:\/\/(?:[a-z]{2}\.)?linkedin\.com\/(?:in|company)\/[a-zA-Z0-9._%-]+/gi) || [];
+  const instagramMatches = text.match(/https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9._%-]+\/?/gi) || [];
+
+  return [...linkedInMatches, ...instagramMatches];
 }
 
 function normalizeLinkedInIdentity(value, preferredType) {
@@ -1344,6 +1554,45 @@ function renderProfiles(profiles, hasError = false) {
   });
 
   return profiles.length;
+}
+
+function renderJudicialResults(items, hasError = false) {
+  if (!dom.judicialList) {
+    return 0;
+  }
+
+  dom.judicialList.innerHTML = "";
+
+  if (hasError || !Array.isArray(items)) {
+    dom.judicialList.appendChild(buildEmpty("Falha ao carregar resultados judiciais."));
+    return 0;
+  }
+
+  if (items.length === 0) {
+    dom.judicialList.appendChild(buildEmpty("Nenhum resultado judicial encontrado para este termo."));
+    return 0;
+  }
+
+  items.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "result-card";
+
+    const title = document.createElement("h3");
+    title.appendChild(buildAnchor(item.url, item.title || "Abrir resultado"));
+
+    const meta = document.createElement("p");
+    meta.className = "meta";
+    meta.append(buildMetaSource(item.source || "Fonte"), document.createTextNode(formatDate(item.date)));
+
+    const description = document.createElement("p");
+    description.className = "meta";
+    description.textContent = item.description || "Sem resumo disponivel.";
+
+    card.append(title, meta, description);
+    dom.judicialList.appendChild(card);
+  });
+
+  return items.length;
 }
 
 function buildAnchor(url, text) {
