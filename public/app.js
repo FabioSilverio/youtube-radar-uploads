@@ -310,7 +310,16 @@ async function fetchOpenSearch(term, signal) {
   let providerErrors = [];
 
   for (const variant of variants) {
-    const result = await fetchOpenSearchWithVariant(variant, signal);
+    let result = { items: [], providerErrors: [] };
+    try {
+      result = await fetchOpenSearchWithVariant(variant, signal);
+    } catch {
+      result = {
+        items: [],
+        providerErrors: [`Falha geral (${variant})`]
+      };
+    }
+
     mergedItems = uniqueBy([...mergedItems, ...result.items], (item) => normalizeNewsIdentity(item));
     providerErrors = uniqueBy([...providerErrors, ...result.providerErrors], (item) => item);
 
@@ -320,10 +329,6 @@ async function fetchOpenSearch(term, signal) {
   }
 
   const sorted = sortByDateDesc(mergedItems).slice(0, 12);
-  if (sorted.length === 0) {
-    throw new Error("Sem noticias de provedores abertos");
-  }
-
   return {
     items: sorted,
     providerErrors
@@ -355,9 +360,31 @@ async function fetchOpenSearchWithVariant(query, signal) {
 }
 
 async function fetchProviderRssNews(provider, rssUrl, signal) {
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
-  const xmlText = await fetchText(proxyUrl, signal, 11000);
-  return parseRssNewsItems(xmlText, provider);
+  const proxyCandidates = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`
+  ];
+
+  for (const proxyUrl of proxyCandidates) {
+    try {
+      const raw = await fetchText(proxyUrl, signal, 9000);
+      const xmlText = proxyUrl.includes("/get?url=")
+        ? JSON.parse(raw)?.contents || ""
+        : raw;
+      if (!xmlText) {
+        continue;
+      }
+
+      const items = parseRssNewsItems(xmlText, provider);
+      if (items.length > 0) {
+        return items;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
 }
 
 function parseRssNewsItems(xmlText, provider) {
@@ -366,7 +393,7 @@ function parseRssNewsItems(xmlText, provider) {
   const hasError = xml.querySelector("parsererror");
 
   if (hasError) {
-    throw new Error(`RSS invalido (${provider})`);
+    return [];
   }
 
   const items = Array.from(xml.querySelectorAll("item"));
@@ -401,7 +428,13 @@ async function fetchLatestNews(term, signal) {
     });
 
     const url = `https://api.gdeltproject.org/api/v2/doc/doc?${params.toString()}`;
-    const data = await fetchJson(url, signal);
+    let data = null;
+    try {
+      data = await fetchJson(url, signal, 9000);
+    } catch {
+      continue;
+    }
+
     const list = Array.isArray(data.articles) ? data.articles : [];
 
     const mapped = list.map((item) => ({
@@ -424,10 +457,19 @@ async function fetchWikipediaContext(term, signal) {
   const variants = buildQueryVariants(term);
 
   for (const variant of variants) {
-    let context = await searchWikipedia(variant, "pt", signal);
+    let context = { summary: null, related: [] };
+    try {
+      context = await searchWikipedia(variant, "pt", signal);
+    } catch {
+      context = { summary: null, related: [] };
+    }
 
     if (context.related.length === 0) {
-      context = await searchWikipedia(variant, "en", signal);
+      try {
+        context = await searchWikipedia(variant, "en", signal);
+      } catch {
+        context = { summary: null, related: [] };
+      }
     }
 
     if (context.related.length > 0 || context.summary) {
