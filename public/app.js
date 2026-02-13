@@ -552,42 +552,124 @@ async function fetchJudicialRecords(term, signal) {
 }
 
 async function fetchBingWebSearchFeed(query, signal) {
+  const bingItems = await fetchBingSearchRssFeed(query, signal);
+  if (bingItems.length > 0) {
+    return bingItems;
+  }
+
+  return fetchDuckDuckGoLiteFeed(query, signal);
+}
+
+async function fetchBingSearchRssFeed(query, signal) {
   const rssUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss`;
   const proxyCandidates = [
     `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`,
     `https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`
   ];
 
-  let xmlText = "";
-  let lastError = null;
+  for (const proxyUrl of proxyCandidates) {
+    try {
+      const text = await fetchText(proxyUrl, signal, 11000);
+      const xmlText = proxyUrl.includes("/get?url=")
+        ? JSON.parse(text)?.contents || ""
+        : text;
+
+      if (!xmlText) {
+        continue;
+      }
+
+      const parsedItems = parseRssNewsItems(xmlText, "Bing Search");
+      const mapped = parsedItems.map((item) => ({
+        title: item.title || "Resultado sem titulo",
+        url: item.url,
+        source: extractHostLabel(item.url) || item.source || "Bing Search",
+        description: item.description || "",
+        date: item.date
+      }));
+
+      if (mapped.length > 0) {
+        return mapped;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+async function fetchDuckDuckGoLiteFeed(query, signal) {
+  const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+  const proxyCandidates = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(ddgUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(ddgUrl)}`
+  ];
 
   for (const proxyUrl of proxyCandidates) {
     try {
       const text = await fetchText(proxyUrl, signal, 11000);
-      xmlText = proxyUrl.includes("/get?url=")
+      const htmlText = proxyUrl.includes("/get?url=")
         ? JSON.parse(text)?.contents || ""
         : text;
 
-      if (xmlText) {
-        break;
+      if (!htmlText) {
+        continue;
       }
-    } catch (error) {
-      lastError = error;
+
+      const parser = new DOMParser();
+      const html = parser.parseFromString(htmlText, "text/html");
+      const anchors = Array.from(html.querySelectorAll("a[href]"));
+
+      const results = anchors.map((anchor) => {
+        const rawHref = anchor.getAttribute("href") || "";
+        const resolvedHref = resolveDuckDuckGoRedirect(rawHref);
+        const title = stripHtml(anchor.textContent || "");
+
+        if (!resolvedHref || !title) {
+          return null;
+        }
+
+        return {
+          title,
+          url: resolvedHref,
+          source: extractHostLabel(resolvedHref) || "DuckDuckGo",
+          description: "",
+          date: null
+        };
+      }).filter(Boolean);
+
+      if (results.length > 0) {
+        return uniqueBy(results, (item) => normalizeNewsIdentity(item));
+      }
+    } catch {
+      continue;
     }
   }
 
-  if (!xmlText) {
-    throw lastError || new Error("Falha ao carregar feed web");
+  return [];
+}
+
+function resolveDuckDuckGoRedirect(href) {
+  if (!href) {
+    return "";
   }
 
-  const parsedItems = parseRssNewsItems(xmlText, "Bing Search");
-  return parsedItems.map((item) => ({
-    title: item.title || "Resultado sem titulo",
-    url: item.url,
-    source: extractHostLabel(item.url) || item.source || "Bing Search",
-    description: item.description || "",
-    date: item.date
-  }));
+  try {
+    const absoluteHref = href.startsWith("//") ? `https:${href}` : href;
+    const url = new URL(absoluteHref, "https://lite.duckduckgo.com");
+    const host = url.hostname.toLowerCase();
+
+    if (host.includes("duckduckgo.com")) {
+      const target = url.searchParams.get("uddg");
+      if (target) {
+        return decodeURIComponent(target);
+      }
+    }
+
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function isLikelyJudicialResult(item) {
@@ -719,8 +801,19 @@ async function fetchProfiles(term, signal) {
     }
   }
 
-  const sorted = sortByDateDesc(merged).slice(0, 18);
-  return hydrateProfileAvatars(sorted, signal);
+  const prioritized = [...merged].sort((a, b) => {
+    const priorityA = getProfilePriority(a.platform);
+    const priorityB = getProfilePriority(b.platform);
+    if (priorityB !== priorityA) {
+      return priorityB - priorityA;
+    }
+
+    const dateA = a?.date instanceof Date && !Number.isNaN(a.date.getTime()) ? a.date.getTime() : -Infinity;
+    const dateB = b?.date instanceof Date && !Number.isNaN(b.date.getTime()) ? b.date.getTime() : -Infinity;
+    return dateB - dateA;
+  }).slice(0, 20);
+
+  return hydrateProfileAvatars(prioritized, signal);
 }
 
 async function fetchGitHubProfiles(term, signal) {
@@ -1661,6 +1754,24 @@ function rankDiscussionItems(items) {
       const dateB = b?.date instanceof Date && !Number.isNaN(b.date.getTime()) ? b.date.getTime() : -Infinity;
       return dateB - dateA;
     });
+}
+
+function getProfilePriority(platform) {
+  const label = (platform || "").toLowerCase();
+
+  if (label.includes("linkedin") || label.includes("instagram")) {
+    return 4;
+  }
+
+  if (label.includes("x/") || label.includes("twitter")) {
+    return 3;
+  }
+
+  if (label.includes("github") || label.includes("bluesky")) {
+    return 2;
+  }
+
+  return 1;
 }
 
 function computeDiscussionRank(item) {
