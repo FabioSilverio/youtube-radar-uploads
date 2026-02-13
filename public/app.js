@@ -765,11 +765,15 @@ async function fetchBingWebSearchItems(source, signal) {
 }
 
 async function hydrateProfileAvatars(profiles, signal) {
+  let linkedInLookups = 0;
+  const MAX_LINKEDIN_LOOKUPS = 4;
+
   const hydrated = await Promise.all(
     profiles.map(async (profile) => {
       let linkedInAvatar = "";
 
-      if (profile.platform === "LinkedIn") {
+      if (profile.platform === "LinkedIn" && !profile.avatar && linkedInLookups < MAX_LINKEDIN_LOOKUPS) {
+        linkedInLookups += 1;
         linkedInAvatar = await fetchLinkedInAvatarFromPage(profile.url, signal);
       }
 
@@ -802,7 +806,7 @@ async function fetchLinkedInAvatarFromPage(profileUrl, signal) {
 
   try {
     const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(parsed.url)}`;
-    const html = await fetchText(proxyUrl, signal, 7000);
+    const html = await fetchText(proxyUrl, signal, 4500);
     return extractLinkedInImageFromHtml(html);
   } catch {
     return "";
