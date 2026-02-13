@@ -1,17 +1,22 @@
-﻿const dom = {
+﻿const DEFAULT_FETCH_TIMEOUT_MS = 9000;
+
+const dom = {
   form: document.querySelector("#search-form"),
   input: document.querySelector("#query-input"),
   status: document.querySelector("#status"),
+  searchBtn: document.querySelector("#search-btn"),
+  quickChips: document.querySelectorAll(".quick-chip"),
+  openSearchList: document.querySelector("#open-search-list"),
+  openSearchLinks: document.querySelector("#open-search-links"),
   newsList: document.querySelector("#news-list"),
   wikiSummary: document.querySelector("#wiki-summary"),
   wikiRelated: document.querySelector("#wiki-related"),
-  hnList: document.querySelector("#hn-list"),
-  profilesList: document.querySelector("#profiles-list"),
-  quickChips: document.querySelectorAll(".quick-chip"),
-  searchBtn: document.querySelector("#search-btn")
+  discussionList: document.querySelector("#discussion-list"),
+  profilesList: document.querySelector("#profiles-list")
 };
 
 let activeController = null;
+let currentRunId = 0;
 
 dom.form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -38,46 +43,92 @@ async function runScan(term) {
   }
 
   activeController = new AbortController();
+  const signal = activeController.signal;
+  const runId = ++currentRunId;
+  const startedAt = Date.now();
+
   setLoadingState(true);
   clearAllResults();
-  setStatus(`Escaneando: "${term}"...`);
+  setStatus(`Escaneando "${term}"... 0/5 fontes`);
 
-  const signal = activeController.signal;
   const tasks = [
-    fetchLatestNews(term, signal),
-    fetchWikipediaContext(term, signal),
-    fetchHackerNews(term, signal),
-    fetchGitHubProfiles(term, signal),
-    fetchBlueskyProfiles(term, signal)
+    {
+      label: "Busca aberta",
+      fetcher: fetchOpenSearch,
+      renderer: renderOpenSearch
+    },
+    {
+      label: "Noticias",
+      fetcher: fetchLatestNews,
+      renderer: renderNews
+    },
+    {
+      label: "Wikipedia",
+      fetcher: fetchWikipediaContext,
+      renderer: renderWiki
+    },
+    {
+      label: "Discussao tecnica",
+      fetcher: fetchTechnicalDiscussions,
+      renderer: renderDiscussions
+    },
+    {
+      label: "Perfis",
+      fetcher: fetchProfiles,
+      renderer: renderProfiles
+    }
   ];
 
-  const [newsResult, wikiResult, hnResult, githubResult, blueskyResult] = await Promise.allSettled(tasks);
+  let done = 0;
+  let failures = 0;
+  let totalItems = 0;
 
-  if (signal.aborted) {
+  const runs = tasks.map(async (task) => {
+    try {
+      const data = await task.fetcher(term, signal);
+      if (isStaleRun(runId)) {
+        return;
+      }
+
+      totalItems += task.renderer(data);
+    } catch {
+      if (isStaleRun(runId)) {
+        return;
+      }
+
+      failures += 1;
+      totalItems += task.renderer(null, true);
+    } finally {
+      if (isStaleRun(runId)) {
+        return;
+      }
+
+      done += 1;
+      setStatus(`Escaneando "${term}"... ${done}/${tasks.length} fontes`);
+    }
+  });
+
+  await Promise.allSettled(runs);
+
+  if (isStaleRun(runId)) {
     return;
   }
 
-  const news = readSettled(newsResult);
-  const wiki = readSettled(wikiResult, { summary: null, related: [] });
-  const hn = readSettled(hnResult);
-  const githubProfiles = readSettled(githubResult);
-  const blueskyProfiles = readSettled(blueskyResult);
-
-  renderNews(news);
-  renderWiki(wiki);
-  renderHackerNews(hn);
-  renderProfiles([...githubProfiles, ...blueskyProfiles]);
-
-  const total = news.length + wiki.related.length + hn.length + githubProfiles.length + blueskyProfiles.length;
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
   const when = new Date().toLocaleString("pt-BR");
 
-  if (total === 0) {
-    setStatus(`Nenhum resultado para "${term}". Tente outro termo.`);
+  if (totalItems === 0) {
+    setStatus(`Nenhum resultado para "${term}". Tente um termo mais especifico.`);
   } else {
-    setStatus(`Radar atualizado para "${term}" em ${when}. Itens encontrados: ${total}.`);
+    const failText = failures > 0 ? ` Fontes com erro: ${failures}.` : "";
+    setStatus(`Radar atualizado (${elapsed}s) para "${term}" em ${when}. Itens: ${totalItems}.${failText}`);
   }
 
   setLoadingState(false);
+}
+
+function isStaleRun(runId) {
+  return runId !== currentRunId;
 }
 
 function setLoadingState(isLoading) {
@@ -90,12 +141,87 @@ function setStatus(message) {
 }
 
 function clearAllResults() {
-  dom.newsList.innerHTML = "";
-  dom.wikiRelated.innerHTML = "";
-  dom.hnList.innerHTML = "";
-  dom.profilesList.innerHTML = "";
+  setContainerLoading(dom.openSearchList, "Carregando resultados de busca...");
+  dom.openSearchLinks.innerHTML = "";
+
+  setContainerLoading(dom.newsList, "Carregando noticias...");
+
   dom.wikiSummary.classList.add("empty-box");
-  dom.wikiSummary.textContent = "Carregando...";
+  dom.wikiSummary.textContent = "Carregando contexto enciclopedico...";
+  setContainerLoading(dom.wikiRelated, "Carregando paginas relacionadas...");
+
+  setContainerLoading(dom.discussionList, "Carregando discussoes...");
+  setContainerLoading(dom.profilesList, "Carregando perfis publicos...");
+}
+
+function setContainerLoading(container, message) {
+  container.innerHTML = "";
+  container.appendChild(buildEmpty(message));
+}
+
+async function fetchOpenSearch(term, signal) {
+  const params = new URLSearchParams({
+    q: term,
+    format: "json",
+    no_redirect: "1",
+    no_html: "1"
+  });
+
+  const url = `https://api.duckduckgo.com/?${params.toString()}`;
+  const data = await fetchJson(url, signal);
+
+  const results = [];
+
+  if (data.AbstractURL && data.AbstractText) {
+    results.push({
+      title: data.Heading || "Resultado principal",
+      description: data.AbstractText,
+      url: data.AbstractURL
+    });
+  }
+
+  flattenDuckTopics(data.RelatedTopics)
+    .filter((topic) => topic.FirstURL && topic.Text)
+    .slice(0, 8)
+    .forEach((topic) => {
+      results.push({
+        title: topic.Text.split(" - ")[0] || topic.Text,
+        description: topic.Text,
+        url: topic.FirstURL
+      });
+    });
+
+  const deduped = uniqueBy(results, (item) => item.url).slice(0, 8);
+  const encoded = encodeURIComponent(term);
+
+  return {
+    results: deduped,
+    links: [
+      { label: "DuckDuckGo", url: `https://duckduckgo.com/?q=${encoded}` },
+      { label: "Brave Search", url: `https://search.brave.com/search?q=${encoded}` },
+      { label: "Wikipedia", url: `https://pt.wikipedia.org/w/index.php?search=${encoded}` },
+      { label: "Reddit", url: `https://www.reddit.com/search/?q=${encoded}&sort=new` }
+    ]
+  };
+}
+
+function flattenDuckTopics(topics) {
+  if (!Array.isArray(topics)) {
+    return [];
+  }
+
+  const items = [];
+
+  topics.forEach((topic) => {
+    if (Array.isArray(topic.Topics)) {
+      topic.Topics.forEach((nested) => items.push(nested));
+      return;
+    }
+
+    items.push(topic);
+  });
+
+  return items;
 }
 
 async function fetchLatestNews(term, signal) {
@@ -103,7 +229,7 @@ async function fetchLatestNews(term, signal) {
     query: `"${term}"`,
     mode: "ArtList",
     sort: "DateDesc",
-    maxrecords: "8",
+    maxrecords: "10",
     format: "json"
   });
 
@@ -111,12 +237,14 @@ async function fetchLatestNews(term, signal) {
   const data = await fetchJson(url, signal);
   const list = Array.isArray(data.articles) ? data.articles : [];
 
-  return list.map((item) => ({
-    title: item.title || "Sem titulo",
-    url: item.url,
-    source: item.domain || item.sourcecommonname || "fonte nao informada",
-    date: parseGdeltDate(item.seendate)
-  }));
+  return sortByDateDesc(
+    list.map((item) => ({
+      title: item.title || "Sem titulo",
+      url: item.url,
+      source: item.domain || item.sourcecommonname || "Fonte nao informada",
+      date: parseGdeltDate(item.seendate)
+    }))
+  ).slice(0, 8);
 }
 
 async function fetchWikipediaContext(term, signal) {
@@ -175,43 +303,139 @@ async function searchWikipedia(term, lang, signal) {
   return { summary, related };
 }
 
-async function fetchHackerNews(term, signal) {
+async function fetchTechnicalDiscussions(term, signal) {
+  const [hnResult, redditResult] = await Promise.allSettled([
+    fetchHackerNewsRecent(term, signal),
+    fetchRedditDiscussions(term, signal)
+  ]);
+
+  const hnItems = readSettled(hnResult);
+  const redditItems = readSettled(redditResult);
+
+  return {
+    items: sortByDateDesc([...hnItems, ...redditItems]).slice(0, 12),
+    redditBlocked: redditResult.status === "rejected"
+  };
+}
+
+async function fetchHackerNewsRecent(term, signal) {
   const params = new URLSearchParams({
     query: term,
     tags: "story",
     hitsPerPage: "8"
   });
 
-  const url = `https://hn.algolia.com/api/v1/search?${params.toString()}`;
+  const url = `https://hn.algolia.com/api/v1/search_by_date?${params.toString()}`;
   const data = await fetchJson(url, signal);
   const hits = Array.isArray(data.hits) ? data.hits : [];
 
-  return hits.map((hit) => ({
-    title: hit.title || hit.story_title || "Sem titulo",
-    url: hit.url || hit.story_url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
-    author: hit.author || "autor desconhecido",
-    points: Number.isFinite(hit.points) ? hit.points : 0,
-    date: hit.created_at ? new Date(hit.created_at) : null
-  }));
+  return sortByDateDesc(
+    hits.map((hit) => ({
+      source: "Hacker News",
+      title: hit.title || hit.story_title || "Sem titulo",
+      url: hit.url || hit.story_url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+      author: hit.author || "autor desconhecido",
+      score: Number.isFinite(hit.points) ? hit.points : 0,
+      date: hit.created_at ? new Date(hit.created_at) : null
+    }))
+  );
+}
+
+async function fetchRedditDiscussions(term, signal) {
+  const params = new URLSearchParams({
+    q: term,
+    sort: "new",
+    limit: "8",
+    t: "all",
+    raw_json: "1"
+  });
+
+  const redditUrl = `https://www.reddit.com/search.json?${params.toString()}`;
+  let redditData;
+
+  try {
+    redditData = await fetchJson(redditUrl, signal);
+  } catch {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(redditUrl)}`;
+    const text = await fetchText(proxyUrl, signal, 10000);
+
+    try {
+      redditData = JSON.parse(text);
+    } catch {
+      throw new Error("Reddit indisponivel");
+    }
+  }
+
+  const children = Array.isArray(redditData?.data?.children) ? redditData.data.children : [];
+
+  if (children.length === 0) {
+    return [];
+  }
+
+  return sortByDateDesc(
+    children.map((entry) => {
+      const post = entry.data || {};
+      const permalink = post.permalink || "";
+
+      return {
+        source: "Reddit",
+        title: post.title || "Sem titulo",
+        url: permalink ? `https://www.reddit.com${permalink}` : `https://www.reddit.com/search/?q=${encodeURIComponent(term)}&sort=new`,
+        author: post.author || "autor desconhecido",
+        score: Number.isFinite(post.score) ? post.score : 0,
+        subreddit: post.subreddit_name_prefixed || "r/unknown",
+        date: Number.isFinite(post.created_utc) ? new Date(post.created_utc * 1000) : null
+      };
+    })
+  );
+}
+
+async function fetchProfiles(term, signal) {
+  const [githubResult, blueskyResult, wikidataResult] = await Promise.allSettled([
+    fetchGitHubProfiles(term, signal),
+    fetchBlueskyProfiles(term, signal),
+    fetchWikidataSocialProfiles(term, signal)
+  ]);
+
+  const merged = [
+    ...readSettled(githubResult),
+    ...readSettled(blueskyResult),
+    ...readSettled(wikidataResult)
+  ];
+
+  return sortByDateDesc(uniqueBy(merged, (item) => `${item.platform}|${item.url}`)).slice(0, 12);
 }
 
 async function fetchGitHubProfiles(term, signal) {
   const params = new URLSearchParams({
     q: `${term} in:login in:name`,
-    per_page: "6"
+    per_page: "5"
   });
 
-  const url = `https://api.github.com/search/users?${params.toString()}`;
-  const data = await fetchJson(url, signal);
-  const users = Array.isArray(data.items) ? data.items : [];
+  const searchUrl = `https://api.github.com/search/users?${params.toString()}`;
+  const searchData = await fetchJson(searchUrl, signal);
+  const users = Array.isArray(searchData.items) ? searchData.items : [];
 
-  return users.map((user) => ({
-    platform: "GitHub",
-    name: user.login,
-    url: user.html_url,
-    avatar: user.avatar_url,
-    note: `Score ${Number(user.score || 0).toFixed(1)}`
-  }));
+  const detailResults = await Promise.allSettled(
+    users.map((user) => fetchJson(user.url, signal))
+  );
+
+  return sortByDateDesc(
+    users.map((user, index) => {
+      const detail = detailResults[index].status === "fulfilled" ? detailResults[index].value : null;
+
+      return {
+        platform: "GitHub",
+        name: detail?.name || user.login,
+        url: user.html_url,
+        avatar: user.avatar_url,
+        date: detail?.created_at ? new Date(detail.created_at) : null,
+        note: detail
+          ? `${detail.followers || 0} seguidores | ${detail.public_repos || 0} repositorios`
+          : `Score ${Number(user.score || 0).toFixed(1)}`
+      };
+    })
+  );
 }
 
 async function fetchBlueskyProfiles(term, signal) {
@@ -224,17 +448,120 @@ async function fetchBlueskyProfiles(term, signal) {
   const data = await fetchJson(url, signal);
   const actors = Array.isArray(data.actors) ? data.actors : [];
 
-  return actors.map((actor) => ({
-    platform: "Bluesky",
-    name: actor.displayName || actor.handle,
-    url: `https://bsky.app/profile/${encodeURIComponent(actor.handle)}`,
-    avatar: actor.avatar || "",
-    note: actor.description ? actor.description.slice(0, 110) : actor.handle
-  }));
+  return sortByDateDesc(
+    actors.map((actor) => ({
+      platform: "Bluesky",
+      name: actor.displayName || actor.handle,
+      url: `https://bsky.app/profile/${encodeURIComponent(actor.handle)}`,
+      avatar: actor.avatar || "",
+      date: actor.createdAt ? new Date(actor.createdAt) : actor.indexedAt ? new Date(actor.indexedAt) : null,
+      note: actor.description ? actor.description.slice(0, 110) : actor.handle
+    }))
+  );
 }
 
-async function fetchJson(url, signal) {
-  const response = await fetch(url, { signal });
+async function fetchWikidataSocialProfiles(term, signal) {
+  const searchParams = new URLSearchParams({
+    action: "wbsearchentities",
+    search: term,
+    language: "en",
+    limit: "5",
+    format: "json",
+    origin: "*"
+  });
+
+  const searchUrl = `https://www.wikidata.org/w/api.php?${searchParams.toString()}`;
+  const searchData = await fetchJson(searchUrl, signal);
+  const entities = Array.isArray(searchData.search) ? searchData.search : [];
+  const ids = entities.map((item) => item.id).filter(Boolean).slice(0, 5);
+
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const getParams = new URLSearchParams({
+    action: "wbgetentities",
+    ids: ids.join("|"),
+    props: "labels|descriptions|claims",
+    languages: "pt|en",
+    format: "json",
+    origin: "*"
+  });
+
+  const getUrl = `https://www.wikidata.org/w/api.php?${getParams.toString()}`;
+  const details = await fetchJson(getUrl, signal);
+  const allEntities = details.entities || {};
+  const results = [];
+
+  Object.values(allEntities).forEach((entity) => {
+    const label = pickLabel(entity, ["pt", "en"]) || "Entidade";
+    const description = pickDescription(entity, ["pt", "en"]);
+
+    extractClaimValues(entity, "P2002").forEach((handle) => {
+      results.push({
+        platform: "X/Twitter",
+        name: `@${handle}`,
+        url: `https://x.com/${encodeURIComponent(handle)}`,
+        avatar: "",
+        date: null,
+        note: description ? `${label} - ${description}` : `${label} (Wikidata)`
+      });
+    });
+
+    extractClaimValues(entity, "P4265").forEach((username) => {
+      results.push({
+        platform: "Reddit",
+        name: `u/${username}`,
+        url: `https://www.reddit.com/user/${encodeURIComponent(username)}`,
+        avatar: "",
+        date: null,
+        note: description ? `${label} - ${description}` : `${label} (Wikidata)`
+      });
+    });
+  });
+
+  return uniqueBy(results, (item) => item.url);
+}
+
+function extractClaimValues(entity, propertyId) {
+  const claims = Array.isArray(entity?.claims?.[propertyId]) ? entity.claims[propertyId] : [];
+  const values = [];
+
+  claims.forEach((claim) => {
+    const value = claim?.mainsnak?.datavalue?.value;
+
+    if (typeof value === "string" && value.trim()) {
+      values.push(value.trim());
+    }
+  });
+
+  return values;
+}
+
+function pickLabel(entity, langs) {
+  for (const lang of langs) {
+    const value = entity?.labels?.[lang]?.value;
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function pickDescription(entity, langs) {
+  for (const lang of langs) {
+    const value = entity?.descriptions?.[lang]?.value;
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+async function fetchJson(url, signal, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const response = await fetchWithTimeout(url, signal, timeoutMs);
 
   if (!response.ok) {
     throw new Error(`Falha ${response.status} em ${url}`);
@@ -243,10 +570,110 @@ async function fetchJson(url, signal) {
   return response.json();
 }
 
-function renderNews(news) {
+async function fetchText(url, signal, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const response = await fetchWithTimeout(url, signal, timeoutMs);
+
+  if (!response.ok) {
+    throw new Error(`Falha ${response.status} em ${url}`);
+  }
+
+  return response.text();
+}
+
+async function fetchWithTimeout(url, parentSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const abortFromParent = () => controller.abort();
+
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort();
+    } else {
+      parentSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, {
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`Timeout apos ${timeoutMs}ms`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+
+    if (parentSignal) {
+      parentSignal.removeEventListener("abort", abortFromParent);
+    }
+  }
+}
+
+function renderOpenSearch(payload, hasError = false) {
+  dom.openSearchList.innerHTML = "";
+  dom.openSearchLinks.innerHTML = "";
+
+  if (hasError || !payload) {
+    dom.openSearchList.appendChild(buildEmpty("Busca aberta indisponivel no momento."));
+    return 0;
+  }
+
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  if (results.length === 0) {
+    dom.openSearchList.appendChild(buildEmpty("Sem itens na API de busca aberta para este termo."));
+  } else {
+    results.forEach((item) => {
+      const box = document.createElement("article");
+      box.className = "mini-item";
+
+      const link = document.createElement("a");
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = item.title || item.url;
+
+      const description = document.createElement("p");
+      description.textContent = item.description || "Sem descricao.";
+
+      box.append(link, description);
+      dom.openSearchList.appendChild(box);
+    });
+  }
+
+  const links = Array.isArray(payload.links) ? payload.links : [];
+  links.forEach((item) => {
+    const anchor = document.createElement("a");
+    anchor.className = "search-link";
+    anchor.href = item.url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.textContent = item.label;
+    dom.openSearchLinks.appendChild(anchor);
+  });
+
+  return results.length;
+}
+
+function renderNews(news, hasError = false) {
+  dom.newsList.innerHTML = "";
+
+  if (hasError || !Array.isArray(news)) {
+    dom.newsList.appendChild(buildEmpty("Falha ao carregar noticias."));
+    return 0;
+  }
+
   if (news.length === 0) {
     dom.newsList.appendChild(buildEmpty("Nenhuma noticia encontrada."));
-    return;
+    return 0;
   }
 
   news.forEach((item) => {
@@ -254,25 +681,28 @@ function renderNews(news) {
     card.className = "result-card";
 
     const title = document.createElement("h3");
-    const link = document.createElement("a");
-    link.href = item.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = item.title;
-    title.appendChild(link);
+    title.appendChild(buildAnchor(item.url, item.title));
 
     const meta = document.createElement("p");
     meta.className = "meta";
-    const dateText = item.date ? item.date.toLocaleString("pt-BR") : "data nao informada";
-    meta.textContent = `${item.source} | ${dateText}`;
+    meta.append(buildMetaSource(item.source), document.createTextNode(formatDate(item.date)));
 
     card.append(title, meta);
     dom.newsList.appendChild(card);
   });
+
+  return news.length;
 }
 
-function renderWiki(context) {
+function renderWiki(context, hasError = false) {
   dom.wikiSummary.innerHTML = "";
+  dom.wikiRelated.innerHTML = "";
+
+  if (hasError || !context) {
+    dom.wikiSummary.classList.add("empty-box");
+    dom.wikiSummary.textContent = "Falha ao carregar Wikipedia.";
+    return 0;
+  }
 
   if (!context.summary) {
     dom.wikiSummary.classList.add("empty-box");
@@ -281,12 +711,7 @@ function renderWiki(context) {
     dom.wikiSummary.classList.remove("empty-box");
 
     const title = document.createElement("h3");
-    const link = document.createElement("a");
-    link.href = context.summary.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = context.summary.title;
-    title.appendChild(link);
+    title.appendChild(buildAnchor(context.summary.url, context.summary.title));
 
     const extract = document.createElement("p");
     extract.textContent = context.summary.extract;
@@ -294,33 +719,43 @@ function renderWiki(context) {
     dom.wikiSummary.append(title, extract);
   }
 
-  if (context.related.length === 0) {
+  if (!Array.isArray(context.related) || context.related.length === 0) {
     dom.wikiRelated.appendChild(buildEmpty("Sem paginas relacionadas na Wikipedia."));
-    return;
+    return context.summary ? 1 : 0;
   }
 
   context.related.slice(0, 5).forEach((entry) => {
     const box = document.createElement("article");
     box.className = "mini-item";
 
-    const link = document.createElement("a");
-    link.href = entry.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = entry.title;
-
+    const link = buildAnchor(entry.url, entry.title);
     const description = document.createElement("p");
     description.textContent = entry.description;
 
     box.append(link, description);
     dom.wikiRelated.appendChild(box);
   });
+
+  return context.related.length + (context.summary ? 1 : 0);
 }
 
-function renderHackerNews(items) {
+function renderDiscussions(payload, hasError = false) {
+  dom.discussionList.innerHTML = "";
+
+  if (hasError || !payload) {
+    dom.discussionList.appendChild(buildEmpty("Falha ao carregar discussao tecnica."));
+    return 0;
+  }
+
+  if (payload.redditBlocked) {
+    dom.discussionList.appendChild(buildEmpty("Reddit bloqueou esta consulta nesta rede. Exibindo outras fontes disponiveis."));
+  }
+
+  const items = Array.isArray(payload.items) ? payload.items : [];
+
   if (items.length === 0) {
-    dom.hnList.appendChild(buildEmpty("Sem discussoes recentes no Hacker News."));
-    return;
+    dom.discussionList.appendChild(buildEmpty("Sem discussoes recentes para este termo."));
+    return 0;
   }
 
   items.forEach((item) => {
@@ -328,30 +763,47 @@ function renderHackerNews(items) {
     card.className = "result-card";
 
     const title = document.createElement("h3");
-    const link = document.createElement("a");
-    link.href = item.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = item.title;
-    title.appendChild(link);
+    title.appendChild(buildAnchor(item.url, item.title));
 
     const meta = document.createElement("p");
     meta.className = "meta";
-    const dateText = item.date ? item.date.toLocaleString("pt-BR") : "data nao informada";
-    meta.textContent = `por ${item.author} | ${item.points} pontos | ${dateText}`;
+    meta.append(buildMetaSource(item.source));
+
+    const parts = [];
+    if (item.author) {
+      parts.push(`por ${item.author}`);
+    }
+    if (Number.isFinite(item.score)) {
+      parts.push(`${item.score} pontos`);
+    }
+    if (item.subreddit) {
+      parts.push(item.subreddit);
+    }
+    parts.push(formatDate(item.date));
+
+    meta.append(document.createTextNode(parts.join(" | ")));
 
     card.append(title, meta);
-    dom.hnList.appendChild(card);
+    dom.discussionList.appendChild(card);
   });
+
+  return items.length;
 }
 
-function renderProfiles(profiles) {
-  if (profiles.length === 0) {
-    dom.profilesList.appendChild(buildEmpty("Nenhum perfil publico encontrado."));
-    return;
+function renderProfiles(profiles, hasError = false) {
+  dom.profilesList.innerHTML = "";
+
+  if (hasError || !Array.isArray(profiles)) {
+    dom.profilesList.appendChild(buildEmpty("Falha ao carregar perfis publicos."));
+    return 0;
   }
 
-  profiles.slice(0, 10).forEach((profile) => {
+  if (profiles.length === 0) {
+    dom.profilesList.appendChild(buildEmpty("Nenhum perfil publico encontrado."));
+    return 0;
+  }
+
+  profiles.forEach((profile) => {
     const card = document.createElement("article");
     card.className = "profile-card";
 
@@ -364,11 +816,7 @@ function renderProfiles(profiles) {
     const body = document.createElement("div");
     body.className = "profile-body";
 
-    const name = document.createElement("a");
-    name.href = profile.url;
-    name.target = "_blank";
-    name.rel = "noopener noreferrer";
-    name.textContent = profile.name;
+    const name = buildAnchor(profile.url, profile.name);
 
     const platform = document.createElement("p");
     platform.className = "platform";
@@ -376,12 +824,35 @@ function renderProfiles(profiles) {
 
     const note = document.createElement("p");
     note.className = "profile-note";
-    note.textContent = profile.note;
+
+    if (profile.date) {
+      note.textContent = `${profile.note} | desde ${profile.date.toLocaleDateString("pt-BR")}`;
+    } else {
+      note.textContent = profile.note;
+    }
 
     body.append(name, platform, note);
     card.append(avatar, body);
     dom.profilesList.appendChild(card);
   });
+
+  return profiles.length;
+}
+
+function buildAnchor(url, text) {
+  const link = document.createElement("a");
+  link.href = url || "#";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = text || url || "Abrir";
+  return link;
+}
+
+function buildMetaSource(source) {
+  const span = document.createElement("span");
+  span.className = "meta-source";
+  span.textContent = `${source || "Fonte"} `;
+  return span;
 }
 
 function buildEmpty(message) {
@@ -409,4 +880,35 @@ function parseGdeltDate(raw) {
 
 function readSettled(result, fallback = []) {
   return result.status === "fulfilled" ? result.value : fallback;
+}
+
+function sortByDateDesc(items) {
+  return [...items].sort((a, b) => {
+    const dateA = a?.date instanceof Date && !Number.isNaN(a.date.getTime()) ? a.date.getTime() : -Infinity;
+    const dateB = b?.date instanceof Date && !Number.isNaN(b.date.getTime()) ? b.date.getTime() : -Infinity;
+    return dateB - dateA;
+  });
+}
+
+function formatDate(date) {
+  return date instanceof Date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString("pt-BR")
+    : "data nao informada";
+}
+
+function uniqueBy(items, keyFn) {
+  const seen = new Set();
+  const output = [];
+
+  items.forEach((item) => {
+    const key = keyFn(item);
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    output.push(item);
+  });
+
+  return output;
 }

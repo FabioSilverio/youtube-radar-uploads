@@ -193,6 +193,31 @@ h2 {
   gap: 0.6rem;
 }
 
+.search-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.search-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.42rem 0.76rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 700;
+  background: rgba(4, 23, 23, 0.85);
+}
+
+.search-link:hover {
+  color: var(--ink);
+  border-color: var(--line-bright);
+}
+
 .result-card {
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -219,6 +244,14 @@ h2 {
   margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.meta-source {
+  color: var(--warm);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-right: 0.25rem;
 }
 
 .summary-card {

@@ -15,7 +15,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="stylesheet" href="./styles.css?v=20260213-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260213-2" />
   </head>
   <body>
     <div class="bg-grid" aria-hidden="true"></div>
@@ -49,6 +49,15 @@
     </header>
 
     <main class="layout">
+      <section class="panel" aria-labelledby="search-heading">
+        <div class="panel-head">
+          <h2 id="search-heading">Busca aberta</h2>
+          <span class="source-badge">DuckDuckGo API</span>
+        </div>
+        <div id="open-search-list" class="mini-list"></div>
+        <div id="open-search-links" class="search-link-row"></div>
+      </section>
+
       <section class="panel" aria-labelledby="news-heading">
         <div class="panel-head">
           <h2 id="news-heading">Ultimas noticias</h2>
@@ -71,15 +80,15 @@
       <section class="panel" aria-labelledby="discussion-heading">
         <div class="panel-head">
           <h2 id="discussion-heading">Discussao tecnica</h2>
-          <span class="source-badge">Hacker News</span>
+          <span class="source-badge">Hacker News + Reddit</span>
         </div>
-        <div id="hn-list" class="card-list"></div>
+        <div id="discussion-list" class="card-list"></div>
       </section>
 
       <section class="panel" aria-labelledby="profiles-heading">
         <div class="panel-head">
           <h2 id="profiles-heading">Perfis publicos relacionados</h2>
-          <span class="source-badge">GitHub + Bluesky</span>
+          <span class="source-badge">GitHub + Bluesky + X</span>
         </div>
         <div id="profiles-list" class="profile-grid"></div>
       </section>
@@ -87,10 +96,10 @@
 
     <footer class="footnote">
       <p>
-        Dados vindos de APIs publicas. Alguns provedores podem limitar volume de consultas.
+        Dados vindos de APIs publicas. Algumas fontes (especialmente Reddit) podem bloquear acesso em certas redes.
       </p>
     </footer>
 
-    <script src="./app.js?v=20260213-1" defer></script>
+    <script src="./app.js?v=20260213-2" defer></script>
   </body>
 </html>
